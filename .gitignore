@@ -1,0 +1,12 @@
+_output
+.idea
+*.log
+tags
+*.swp
+**/*.pem
+**/*.csr
+*.db
+mysql-data
+*.sqlite3
+.vscode
+**/*.DS_Store

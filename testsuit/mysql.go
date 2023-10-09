@@ -30,7 +30,7 @@ type MySQLOption struct {
 // InitMysql 启动测试数据库
 // 前提: 在根目录执行 docker-compose up 命令
 func InitMysql(opts ...MySQLOption) *gorm.DB {
-	dsn := "root:@tcp(mysql:3306)/my_db?parseTime=true&loc=Local"
+	dsn := "root:123456@tcp(127.0.0.1:3306)/my_db?parseTime=true&loc=Local"
 	if os.Getenv("LOCAL_TEST") == "true" {
 		dsn = "root:@tcp(localhost:3308)/my_db?parseTime=true&loc=Local"
 	}
@@ -47,7 +47,7 @@ func InitMysqlWithDatabase(db *gorm.DB, database string) *gorm.DB {
 	if err != nil {
 		panic(err)
 	}
-	dsn := fmt.Sprintf("root:@tcp(mysql:3306)/%s?parseTime=true&loc=Local", database)
+	dsn := fmt.Sprintf("root:123456@tcp(127.0.0.1:3306)/%s?parseTime=true&loc=Local", database)
 	if os.Getenv("LOCAL_TEST") == "true" {
 		dsn = fmt.Sprintf("root:@tcp(localhost:3308)/%s?parseTime=true&loc=Local", database)
 	}

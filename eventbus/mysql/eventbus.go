@@ -50,6 +50,7 @@ const txCheckTimeout = time.Minute
 
 var ErrInvalidDB = fmt.Errorf("invalid db")
 var ErrNoTransaction = fmt.Errorf("no transaction")
+var ErrServiceNotCreate = fmt.Errorf("service not create")
 
 var defaultLogger = stdr.New(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile)).WithName("mysql_eventbus")
 
@@ -189,7 +190,8 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 	} else {
 		strategy = &IntervalRetry{Interval: retryInterval, Limit: retryLimit}
 	}
-	return &EventBus{
+
+	eb := &EventBus{
 		serviceName:   serviceName,
 		db:            db,
 		logger:        defaultLogger,
@@ -198,12 +200,13 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 		txKey:         contextKey(fmt.Sprintf("eventbus_tx_%d", time.Now().Unix())),
 		cleanCron:     cron.New(),
 	}
+	_ = eb.initService()
+	return eb
 }
 
 func (e *EventBus) Options() []dddfirework.Option {
 	return []dddfirework.Option{
 		dddfirework.WithEventBus(e),
-		//dddfirework.WithEventPersist(eventPersist),
 		dddfirework.WithPostSave(e.onPostSave),
 	}
 }
@@ -313,17 +316,22 @@ func (e *EventBus) RegisterEventHandler(cb dddfirework.DomainEventHandler) {
 	e.cb = cb
 }
 
-// 初次创建无记录情况下锁是无效的，因此采用插入后再重新竞争 update 锁的方式解决
-func (e *EventBus) getOrCreateService(tx *gorm.DB) (*ServicePO, error) {
-	service := &ServicePO{Name: e.serviceName}
+func (e *EventBus) initService() error {
+	service := &ServicePO{}
+	err := e.db.Where(ServicePO{Name: e.serviceName}).FirstOrCreate(service).Error
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *EventBus) lockService(tx *gorm.DB) (*ServicePO, error) {
+	service := &ServicePO{}
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("name = ?", e.serviceName).
 		First(service).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if err := tx.Create(service).Error; err != nil {
-				return nil, err
-			}
-			return e.getOrCreateService(tx)
+			return nil, ErrServiceNotCreate
 		}
 		return nil, err
 	}
@@ -433,7 +441,7 @@ func (e *EventBus) handleEvents() error {
 
 	return e.db.Transaction(func(tx *gorm.DB) error {
 		ctx := context.Background()
-		service, err := e.getOrCreateService(tx)
+		service, err := e.lockService(tx)
 		if err != nil {
 			return err
 		}
@@ -592,6 +600,9 @@ func (e *EventBus) Start(ctx context.Context) {
 
 			if e.cb != nil {
 				if err := e.handleEvents(); err != nil {
+					if errors.Is(err, ErrServiceNotCreate) {
+						_ = e.initService()
+					}
 					e.logger.Error(err, "handler events err")
 				}
 			}

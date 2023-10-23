@@ -184,6 +184,7 @@ type Options struct {
 	EventPersist    EventPersist // 是否保存领域事件到 DB
 	Logger          logr.Logger
 	EventBus        IEventBus
+	Timer           ITimer
 	IDGenerator     IIDGenerator
 	PostSaveHooks   []PostSaveFunc
 }
@@ -232,6 +233,18 @@ func WithEventBus(eventBus IEventBus) EventBusOption {
 	return EventBusOption{eventBus: eventBus}
 }
 
+type DTimerOption struct {
+	timer ITimer
+}
+
+func (t DTimerOption) ApplyToOptions(opts *Options) {
+	opts.Timer = t.timer
+}
+
+func WithTimer(timer ITimer) DTimerOption {
+	return DTimerOption{timer: timer}
+}
+
 type EventPersist func(event *DomainEvent) (IModel, error)
 
 type EventSaveOption EventPersist
@@ -271,6 +284,7 @@ type Engine struct {
 	executor    IExecutor
 	idGenerator IIDGenerator
 	eventbus    IEventBus
+	timer       ITimer
 	logger      logr.Logger
 	options     Options
 }
@@ -282,6 +296,7 @@ func NewEngine(l ILock, e IExecutor, opts ...Option) *Engine {
 		Logger:          defaultLogger,
 		IDGenerator:     &defaultIDGenerator{},
 		EventBus:        &noEventBus{},
+		Timer:           &noTimer{},
 	}
 	for _, opt := range opts {
 		opt.ApplyToOptions(&options)
@@ -291,10 +306,13 @@ func NewEngine(l ILock, e IExecutor, opts ...Option) *Engine {
 	if txEB, ok := eventBus.(ITransactionEventBus); ok {
 		txEB.RegisterEventTXChecker(onTXChecker)
 	}
+	timer := options.Timer
+	timer.RegisterTimerHandler(onTimer)
 	return &Engine{
 		locker:      l,
 		executor:    e,
 		eventbus:    eventBus,
+		timer:       timer,
 		options:     options,
 		logger:      options.Logger,
 		idGenerator: options.IDGenerator,
@@ -306,6 +324,7 @@ func (e *Engine) NewStage() *Stage {
 		locker:      e.locker,
 		executor:    e.executor,
 		eventBus:    e.eventbus,
+		timer:       e.timer,
 		idGenerator: e.idGenerator,
 		meta:        &EntityContainer{},
 		result:      &Result{},
@@ -379,6 +398,25 @@ func (e *Engine) RegisterEventHandler(eventType EventType, construct EventHandle
 	})
 }
 
+// RegisterCronTask 注册定时任务
+func (e *Engine) RegisterCronTask(key EventType, cron string, f func(key, cron string)) {
+	if e.timer == nil {
+		panic("No ITimer specified")
+	}
+	if hasEventHandler(key) {
+		panic("key has registered")
+	}
+
+	RegisterEventHandler(key, func(ctx context.Context, evt *TimerEvent) error {
+		f(evt.Key, evt.Cron)
+		return nil
+	})
+
+	if err := e.timer.RunCron(string(key), cron, nil); err != nil {
+		panic(err)
+	}
+}
+
 // Stage 取舞台的意思，表示单次运行
 type Stage struct {
 	lockKeys []string
@@ -388,6 +426,7 @@ type Stage struct {
 	locker      ILock
 	executor    IExecutor
 	eventBus    IEventBus
+	timer       ITimer
 	idGenerator IIDGenerator
 	logger      logr.Logger
 	options     Options
@@ -409,6 +448,10 @@ func (e *Stage) WithOption(opts ...Option) *Stage {
 		txEB.RegisterEventTXChecker(onTXChecker)
 	}
 	e.eventBus = eventBus
+
+	timer := e.options.Timer
+	timer.RegisterTimerHandler(onTimer)
+	e.timer = timer
 	e.logger = e.options.Logger
 	e.idGenerator = e.options.IDGenerator
 	return e

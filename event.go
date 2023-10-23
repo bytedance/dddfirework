@@ -37,10 +37,12 @@ const (
 	SendTypeNormal      SendType = "normal"      // 普通事件
 	SendTypeFIFO        SendType = "FIFO"        // 保序事件,即事件以 Sender 的发送时间顺序被消费执行
 	SendTypeTransaction SendType = "transaction" // 事务事件
+	SendTypeDelay       SendType = "delay"       // 延时发送
 )
 
 type EventOption struct {
 	SendType SendType
+	SendTime time.Time // 设定发送时间
 }
 
 type EventOpt func(opt *EventOption)
@@ -114,6 +116,14 @@ func RegisterEventHandler(t EventType, handler EventHandler) {
 	})
 }
 
+func hasEventHandler(t EventType) bool {
+	eventBusMu.Lock()
+	defer eventBusMu.Unlock()
+
+	_, ok := eventRouter[t]
+	return ok
+}
+
 // RegisterEventTXChecker 注册事务反查接口
 func RegisterEventTXChecker(t EventType, checker EventTXChecker) {
 	eventBusMu.Lock()
@@ -152,6 +162,7 @@ func RegisterEventBus(eventBus IEventBus) {
 	}
 }
 
+// onEvent EventBus 的统一的回调入口
 func onEvent(ctx context.Context, evt *DomainEvent) error {
 	defaultLogger.Info("on event call", "event", evt)
 	eventBusMu.Lock()
@@ -247,7 +258,6 @@ func NewDomainEvent(event IEvent, opts ...EventOpt) *DomainEvent {
 
 type IEventBus interface {
 	// Dispatch 发送领域事件到 EventBus，该方法会在事务内被同步调用
-	// context 返回值会被传入 AfterDispatch 调用
 	// 对于每个事件，EventBus 必须要至少保证 at least once 送达
 	Dispatch(ctx context.Context, evt ...*DomainEvent) error
 

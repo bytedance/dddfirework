@@ -238,7 +238,7 @@ func (e *EventBus) getTX(ctx context.Context) *Transaction {
 	return nil
 }
 
-// Dispatch 框架模式下通过框架实现持久化，外部模式下手动存储
+// Dispatch ...
 func (e *EventBus) Dispatch(ctx context.Context, events ...*dddfirework.DomainEvent) error {
 	tx := e.getTX(ctx)
 	pos := make([]*EventPO, len(events))
@@ -318,11 +318,7 @@ func (e *EventBus) RegisterEventHandler(cb dddfirework.DomainEventHandler) {
 
 func (e *EventBus) initService() error {
 	service := &ServicePO{}
-	err := e.db.Where(ServicePO{Name: e.serviceName}).FirstOrCreate(service).Error
-	if err != nil {
-		return err
-	}
-	return nil
+	return e.db.Where(ServicePO{Name: e.serviceName}).FirstOrCreate(service).Error
 }
 
 func (e *EventBus) lockService(tx *gorm.DB) (*ServicePO, error) {
@@ -423,6 +419,11 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (suc
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+
+				}
+			}()
 			for po := range events {
 				if err := e.cb(ctx, po.Event); err != nil {
 					failed = append(failed, po.ID)

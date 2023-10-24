@@ -417,6 +417,23 @@ func (e *Engine) RegisterCronTask(key EventType, cron string, f func(key, cron s
 	}
 }
 
+// RegisterCronTaskOfCommand 注册定时触发的 ICommand
+func (e *Engine) RegisterCronTaskOfCommand(key EventType, cron string, f func(key, cron string) ICommand) {
+	if e.timer == nil {
+		panic("No ITimer specified")
+	}
+	if hasEventHandler(key) {
+		panic("key has registered")
+	}
+
+	e.RegisterEventHandler(key, func(evt *TimerEvent) ICommand {
+		return f(evt.Key, evt.Cron)
+	})
+	if err := e.timer.RunCron(string(key), cron, nil); err != nil {
+		panic(err)
+	}
+}
+
 // Stage 取舞台的意思，表示单次运行
 type Stage struct {
 	lockKeys []string

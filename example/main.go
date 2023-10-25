@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -51,6 +52,8 @@ func main() {
 	lock := db_lock.NewDBLock(db, time.Second*10)
 	executor := db_executor.NewExecutor(db)
 	eventBus := db_eventbus.NewEventBus("svc_example", db)
+	eventBus.Start(context.Background())
+
 	engine := dddfirework.NewEngine(lock, executor, eventBus.Options()...)
 
 	query.Init(db)

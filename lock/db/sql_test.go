@@ -35,8 +35,11 @@ func TestLock(t *testing.T) {
 	assert.NoError(t, err)
 	r := l.(*ResourceLock)
 	assert.True(t, len(r.LockerID) > 0)
-	// 重试5次，至少耗时500ms
-	_, err = lock.Lock(context.Background(), "abc")
+	// 测试lock 过期场景
+	time.Sleep(1 * time.Second)
+	l, err = lock.Lock(context.Background(), "abc")
+	assert.NoError(t, err)
+	err = lock.UnLock(context.Background(), l)
 	assert.NoError(t, err)
 }
 

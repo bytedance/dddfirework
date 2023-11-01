@@ -88,7 +88,7 @@ func (r *DBLock) lock(ctx context.Context, key string) (keyLock interface{}, err
 		// resource updated by others
 		return nil, ErrConflict
 	}
-	return lock, nil
+	return &lock, nil
 }
 
 func (r *DBLock) UnLock(ctx context.Context, keyLock interface{}) error {

@@ -266,12 +266,11 @@ func TestEngine(t *testing.T) {
 	eventBus.Start(ctx)
 
 	engine := dddfirework.NewEngine(nil, exec_mysql.NewExecutor(db), eventBus.Options()...)
-	res := engine.NewStage().Act(func(ctx context.Context, container dddfirework.RootContainer, roots ...dddfirework.IEntity) error {
+	res := engine.NewStage().Main(func(ctx context.Context, repo dddfirework.Repository) error {
 		e := &testEntity{Name: "hello"}
 		e.AddEvent(&testEvent{EType: "test_engine", Data: e.Name})
 		e.AddEvent(&testEvent{EType: "test_engine_tx", Data: e.Name}, dddfirework.WithSendType(dddfirework.SendTypeTransaction))
-		container.Add(e)
-		return nil
+		return repo.Create(e)
 	}).Save(ctx)
 
 	wg.Wait()
@@ -313,11 +312,10 @@ func TestTXChecker(t *testing.T) {
 	eventBus.Start(ctx)
 
 	engine := dddfirework.NewEngine(nil, &mockExecutor{}, eventBus.Options()...)
-	res := engine.NewStage().Act(func(ctx context.Context, container dddfirework.RootContainer, roots ...dddfirework.IEntity) error {
+	res := engine.NewStage().Main(func(ctx context.Context, repo dddfirework.Repository) error {
 		e := &testEntity{Name: "test_commit_failed"}
 		e.AddEvent(&testEvent{EType: "test_commit_failed", Data: e.Name}, dddfirework.WithSendType(dddfirework.SendTypeTransaction))
-		container.Add(e)
-		return nil
+		return repo.Create(e)
 	}).Save(ctx)
 
 	time.Sleep(time.Second * 1)

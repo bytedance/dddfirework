@@ -66,6 +66,15 @@ func (w *EntityContainer) GetChildren() map[string][]IEntity {
 	return map[string][]IEntity{"meta": w.roots}
 }
 
+func (w *EntityContainer) Has(root IEntity) bool {
+	for _, r := range w.roots {
+		if r == root {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *EntityContainer) GetDeleted() []IEntity {
 	return w.deleted
 }
@@ -170,8 +179,91 @@ func (h *RootContainer) Remove(root IEntity) {
 	}
 }
 
+// Repository 聚合根实体仓库
+type Repository struct {
+	stage *Stage
+}
+
+// Get 查询并构建聚合根
+// root 必须指定 id，children 为可选，是 root 下面子实体的指针，需要是 *IEntity 或者 *[]IEntity 类型
+// 方法会根据 root 与 children 的关系，查询并构建 root 与 children 实体
+func (r *Repository) Get(ctx context.Context, root IEntity, children ...interface{}) error {
+	if r.stage.hasSnapshot(root) {
+		return fmt.Errorf("entity has added")
+	}
+
+	if err := r.stage.BuildEntity(ctx, root, children...); err != nil {
+		return err
+	}
+
+	if err := r.stage.meta.Add(root); err != nil {
+		return err
+	}
+	return r.stage.updateSnapshot()
+}
+
+// GetManual 自定义函数获取聚合根实体，并添加到快照
+func (r *Repository) GetManual(ctx context.Context, getter func(ctx context.Context, root ...IEntity), roots ...IEntity) error {
+	getter(ctx, roots...)
+
+	for _, root := range roots {
+		if r.stage.hasSnapshot(root) {
+			return fmt.Errorf("entity has added")
+		}
+		if err := r.stage.meta.Add(root); err != nil {
+			return err
+		}
+	}
+
+	return r.stage.updateSnapshot()
+}
+
+// Create 创建聚合根
+func (r *Repository) Create(roots ...IEntity) error {
+	for _, root := range roots {
+		if r.stage.hasSnapshot(root) {
+			return fmt.Errorf("root must be a new entity")
+		}
+		if err := r.stage.meta.Add(root); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Delete 删除聚合根，root.GetID 不能为空
+func (r *Repository) Delete(roots ...IEntity) error {
+	toCreate := make([]IEntity, 0)
+	for _, root := range roots {
+		if !r.stage.meta.Has(root) {
+			toCreate = append(toCreate, root)
+		}
+	}
+	if len(toCreate) > 0 {
+		if err := r.Create(toCreate...); err != nil {
+			return err
+		}
+		if err := r.stage.updateSnapshot(); err != nil {
+			return err
+		}
+	}
+
+	for _, root := range roots {
+		if err := r.stage.meta.Remove(root); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Save 执行一次保存，并刷新快照
+func (r *Repository) Save(ctx context.Context) error {
+	return r.stage.commit(ctx)
+}
+
 type BuildFunc func(ctx context.Context, h DomainBuilder) (roots []IEntity, err error)
 type ActFunc func(ctx context.Context, container RootContainer, roots ...IEntity) error
+type MainFunc func(ctx context.Context, repo Repository) error
 type PostSaveFunc func(ctx context.Context, res *Result)
 
 // EventHandlerConstruct EventHandler 的构造函数，带一个入参和一个返回值，入参是与事件类型匹配的事件数据指针类型，返回值是 ICommand
@@ -327,6 +419,7 @@ func (e *Engine) NewStage() *Stage {
 		timer:       e.timer,
 		idGenerator: e.idGenerator,
 		meta:        &EntityContainer{},
+		snapshot:    map[IEntity]*entitySnapshot{},
 		result:      &Result{},
 		options:     e.options,
 		logger:      e.logger,
@@ -334,27 +427,28 @@ func (e *Engine) NewStage() *Stage {
 }
 
 func (e *Engine) Create(ctx context.Context, roots ...IEntity) *Result {
-	return e.NewStage().Act(func(ctx context.Context, container RootContainer, entities ...IEntity) error {
-		for _, r := range roots {
-			container.Add(r)
-		}
-		return nil
+	return e.NewStage().Main(func(ctx context.Context, repo Repository) error {
+		return repo.Create(roots...)
 	}).Save(ctx)
 }
 
 func (e *Engine) Delete(ctx context.Context, roots ...IEntity) *Result {
-	return e.NewStage().Build(func(ctx context.Context, builder DomainBuilder) ([]IEntity, error) {
-		return roots, nil
-	}).Act(func(ctx context.Context, container RootContainer, roots ...IEntity) error {
-		for _, r := range roots {
-			container.Remove(r)
-		}
-		return nil
+	return e.NewStage().Main(func(ctx context.Context, repo Repository) error {
+		return repo.Delete(roots...)
 	}).Save(ctx)
 }
 
+// Deprecated: 请用 Run 方法代替
 func (e *Engine) RunCommand(ctx context.Context, c ICommand, opts ...Option) *Result {
 	return e.NewStage().WithOption(opts...).RunCommand(ctx, c)
+}
+
+// Run 运行命令，支持以下格式：
+// 实现 ICommand 接口的对象
+// 实现 ICommandMain 接口的对象
+// 类型为 func(ctx context.Context, repo Repository) error 的函数
+func (e *Engine) Run(ctx context.Context, c interface{}, opts ...Option) *Result {
+	return e.NewStage().WithOption(opts...).Run(ctx, c)
 }
 
 func (e *Engine) RegisterEventHandler(eventType EventType, construct EventHandlerConstruct) {
@@ -437,8 +531,7 @@ func (e *Engine) RegisterCronTaskOfCommand(key EventType, cron string, f func(ke
 // Stage 取舞台的意思，表示单次运行
 type Stage struct {
 	lockKeys []string
-	build    BuildFunc
-	act      ActFunc
+	main     MainFunc
 
 	locker      ILock
 	executor    IExecutor
@@ -591,17 +684,17 @@ func (e *Stage) Lock(keys ...string) *Stage {
 	return e
 }
 
-func (e *Stage) Build(f BuildFunc) *Stage {
-	e.build = f
+func (e *Stage) Main(f MainFunc) *Stage {
+	e.main = f
 	return e
 }
 
-func (e *Stage) Act(f ActFunc) *Stage {
-	e.act = f
-	return e
-}
-
+// Deprecated: 请用 Run 方法代替
 func (e *Stage) RunCommand(ctx context.Context, c ICommand) *Result {
+	return e.Run(ctx, c)
+}
+
+func (e *Stage) runCommand(ctx context.Context, c ICommand) *Result {
 	if setter, ok := c.(IStageSetter); ok {
 		setter.SetStage(StageAgent{st: e})
 	}
@@ -610,7 +703,59 @@ func (e *Stage) RunCommand(ctx context.Context, c ICommand) *Result {
 	if err != nil {
 		return ResultErrOrBreak(err)
 	}
-	return e.WithOption(PostSaveOption(c.PostSave)).Lock(keys...).Build(c.Build).Act(c.Act).Save(ctx)
+	return e.WithOption(PostSaveOption(c.PostSave)).Lock(keys...).Main(func(ctx context.Context, repo Repository) error {
+		buildRoots, err := c.Build(ctx, DomainBuilder{stage: repo.stage})
+		if err != nil {
+			return err
+		}
+		for _, r := range buildRoots {
+			if r.GetID() == "" {
+				return fmt.Errorf("build entities must have ID, for create case, just use container.Add(**) at act func")
+			}
+		}
+		repo.stage.meta.SetChildren(buildRoots)
+
+		// 保存父子实体关系链
+		if err = repo.stage.flush(); err != nil {
+			return err
+		}
+
+		container := RootContainer{stage: repo.stage}
+		if err := c.Act(ctx, container, buildRoots...); err != nil {
+			return err
+		} else if len(container.errs) > 0 {
+			return ErrList(container.errs)
+		}
+		return nil
+	}).Save(ctx)
+}
+
+// Run 运行命令，支持以下格式：
+// 实现 ICommand 接口的对象
+// 实现 ICommandMain 接口的对象
+// 类型为 func(ctx context.Context, repo Repository) error 的函数
+func (e *Stage) Run(ctx context.Context, cmd interface{}) *Result {
+	switch c := cmd.(type) {
+	case ICommand:
+		return e.runCommand(ctx, c)
+	case ICommandMain:
+		var keys []string
+		var options []Option
+		if cmdInit, ok := cmd.(ICommandInit); ok {
+			initKeys, err := cmdInit.Init(ctx)
+			if err != nil {
+				return ResultErrOrBreak(err)
+			}
+			keys = initKeys
+		}
+		if cmdPostSave, ok := cmd.(ICommandPostSave); ok {
+			options = append(options, PostSaveOption(cmdPostSave.PostSave))
+		}
+		return e.WithOption(options...).Lock(keys...).Main(c.Main).Save(ctx)
+	case func(ctx context.Context, repo Repository) error:
+		return e.Main(c).Save(ctx)
+	}
+	panic("cmd is invalid")
 }
 
 func childrenSnapshot(children map[string][]IEntity) map[string][]IEntity {
@@ -623,12 +768,18 @@ func childrenSnapshot(children map[string][]IEntity) map[string][]IEntity {
 	return snapshot
 }
 
-func (e *Stage) makeSnapshot() error {
+func (e *Stage) flush() error {
 	e.snapshot = entitySnapshotPool{}
+	return e.updateSnapshot()
+}
+
+// 更新快照，已有的不覆盖
+func (e *Stage) updateSnapshot() error {
 	return walk(e.meta, nil, func(entity, parent IEntity, children map[string][]IEntity) error {
-		if _, in := e.snapshot[entity]; in {
+		if _, in := e.snapshot[entity]; in && entity != e.meta {
 			return nil
 		}
+
 		po, err := e.executor.Entity2Model(entity, parent, OpQuery)
 		if err != nil && !errors.Is(ErrEntityNotRegister, err) {
 			return err
@@ -639,6 +790,10 @@ func (e *Stage) makeSnapshot() error {
 		}
 		return nil
 	})
+}
+
+func (e *Stage) hasSnapshot(target IEntity) bool {
+	return e.snapshot[target] != nil
 }
 
 // unDirty 对所有实体取消 Dirty 标记
@@ -815,7 +970,7 @@ func (e *Stage) commit(ctx context.Context) error {
 	if err := e.persist(ctx); err != nil {
 		return err
 	}
-	if err := e.makeSnapshot(); err != nil {
+	if err := e.flush(); err != nil {
 		return err
 	}
 
@@ -922,32 +1077,12 @@ func (e *Stage) setOutput(data interface{}) {
 func (e *Stage) do(ctx context.Context) *Result {
 	// 创建聚合
 	var err error
-	var buildRoots []IEntity
-	if e.build != nil {
-		buildRoots, err = e.build(ctx, DomainBuilder{stage: e})
-		if err != nil {
+	if e.main != nil {
+		if err := e.main(ctx, Repository{stage: e}); err != nil {
 			return ResultErrOrBreak(err)
 		}
-		for _, r := range buildRoots {
-			if r.GetID() == "" {
-				return ResultErrors(fmt.Errorf("build entities must have ID, for create case, just use container.Add(**) at act func"))
-			}
-		}
-		e.meta.SetChildren(buildRoots)
 	}
 
-	// 保存父子实体关系链
-	if err = e.makeSnapshot(); err != nil {
-		return ResultError(err)
-	}
-	if e.act != nil {
-		container := RootContainer{stage: e}
-		if err := e.act(ctx, container, buildRoots...); err != nil {
-			return ResultErrOrBreak(err)
-		} else if len(container.errs) > 0 {
-			return ResultErrors(container.errs...)
-		}
-	}
 	err = e.persist(ctx)
 	if err != nil {
 		return ResultErrors(err)

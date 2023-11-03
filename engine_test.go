@@ -205,8 +205,8 @@ func TestRootContainer(t *testing.T) {
 
 func TestBuildError(t *testing.T) {
 	ctx := context.Background()
-	res := NewEngine(nil, nil, WithoutTransaction).NewStage().Build(func(ctx context.Context, h DomainBuilder) (roots []IEntity, err error) {
-		return nil, fmt.Errorf("test")
+	res := NewEngine(nil, nil, WithoutTransaction).NewStage().Main(func(ctx context.Context, repo Repository) error {
+		return fmt.Errorf("test")
 	}).Save(ctx)
 	assert.Error(t, res.Error)
 }
@@ -266,13 +266,15 @@ func TestEntityMove(t *testing.T) {
 	engine := NewEngine(testsuit.NewMemLock(), &MapExecutor{DB: &db})
 	engine.Create(ctx, testOrder1, testOrder2)
 
-	res := engine.NewStage().Build(func(ctx context.Context, h DomainBuilder) (roots []IEntity, err error) {
-		return []IEntity{testOrder1, testOrder2}, nil
-	}).Act(func(ctx context.Context, container RootContainer, roots ...IEntity) error {
+	res := engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
+		if err := repo.GetManual(ctx, func(ctx context.Context, root ...IEntity) {}, testOrder1, testOrder2); err != nil {
+			return err
+		}
 		testOrder1.Products = nil
 		testOrder2.Products = []*product{p}
 		return nil
 	}).Save(ctx)
+
 	assert.NoError(t, res.Error)
 	assert.Len(t, res.Actions, 1)
 	assert.Equal(t, OpUpdate, res.Actions[0].Op)
@@ -434,25 +436,20 @@ func TestEventPersist(t *testing.T) {
 	db := TestDB{
 		Data: map[string]*testModel{},
 	}
-
-	engine := NewEngine(testsuit.NewMemLock(), &MapExecutor{DB: &db}, WithEventBus(&emptyEventBus{}),
+	var testOrder *order
+	res := NewEngine(testsuit.NewMemLock(), &MapExecutor{DB: &db}, WithEventBus(&emptyEventBus{}),
 		WithEventPersist(func(event *DomainEvent) (IModel, error) {
 			return &testModel{
 				ID:   event.ID,
 				Name: string(event.Type),
 			}, nil
-		}))
-
-	var testOrder *order
-	res := engine.NewStage().Act(func(ctx context.Context, container RootContainer, roots ...IEntity) error {
+		})).Run(ctx, func(ctx context.Context, repo Repository) error {
 		testOrder = &order{
 			Title: "order1",
 		}
 		testOrder.AddEvent(&testEvent{Data: "hello"})
-		container.Add(testOrder)
-		return nil
-	}).Save(ctx)
-
+		return repo.Create(testOrder)
+	})
 	assert.NoError(t, res.Error)
 	assert.NotEmpty(t, testOrder.GetEvents())
 	assert.Contains(t, db.Data, testOrder.GetEvents()[0].ID)
@@ -502,9 +499,10 @@ func BenchmarkUpdateOrders(b *testing.B) {
 		}
 		title := fmt.Sprintf("update %d", j)
 		newID := fmt.Sprintf("new%d", j)
-		res := NewEngine(nil, &MapExecutor{DB: &db}).NewStage().Build(func(ctx context.Context, h DomainBuilder) (roots []IEntity, err error) {
-			return []IEntity{testOrder}, nil
-		}).Act(func(ctx context.Context, container RootContainer, roots ...IEntity) error {
+		res := NewEngine(nil, &MapExecutor{DB: &db}).Run(context.Background(), func(ctx context.Context, repo Repository) error {
+			if err := repo.GetManual(ctx, func(ctx context.Context, root ...IEntity) {}, testOrder); err != nil {
+				return err
+			}
 			testOrder.Title = title
 			testOrder.Dirty()
 
@@ -513,7 +511,7 @@ func BenchmarkUpdateOrders(b *testing.B) {
 				Name:       fmt.Sprintf("product%d", j),
 			}}
 			return nil
-		}).Save(context.Background())
+		})
 		if res.Error != nil {
 			panic(res.Error)
 		}

@@ -89,7 +89,7 @@ func (o *orderPO) GetID() string {
 }
 
 func (o *orderPO) TableName() string {
-	return "order"
+	return "exec_order"
 }
 
 type productPO struct {
@@ -341,17 +341,15 @@ func TestRollback(t *testing.T) {
 	ctx := context.Background()
 
 	engine := ddd.NewEngine(testsuit.NewMemLock(), NewExecutor(db))
-	res := engine.NewStage().Act(func(ctx context.Context, container ddd.RootContainer, roots ...ddd.IEntity) error {
-		container.Add(&order{
+	res := engine.Run(ctx, func(ctx context.Context, repo ddd.Repository) error {
+		return repo.Create(&order{
+			ID:    "testrollback",
+			Title: "testrollback",
+		}, &order{
 			ID:    "testrollback",
 			Title: "testrollback",
 		})
-		container.Add(&order{
-			ID:    "testrollback",
-			Title: "testrollback",
-		})
-		return nil
-	}).Save(ctx)
+	})
 	assert.NotNil(t, res.Error)
 	assert.ErrorIs(t, db.First(&orderPO{}, "id = ?", "testrollback").Error, gorm.ErrRecordNotFound)
 }
@@ -407,18 +405,16 @@ func BenchmarkUpdate(b *testing.B) {
 
 	engine := ddd.NewEngine(nil, NewExecutor(db))
 	for i := 0; i < b.N; i++ {
-		if res := engine.NewStage().Build(func(ctx context.Context, builder ddd.DomainBuilder) (roots []ddd.IEntity, err error) {
+		if res := engine.NewStage().Main(func(ctx context.Context, repo ddd.Repository) error {
 			testOrder := &order{
 				ID:       "order1",
 				User:     &user{},
 				Products: []*product{},
 			}
-			if err := builder.Build(ctx, testOrder, testOrder.User, &testOrder.Products); err != nil {
-				return nil, err
+			if err := repo.Get(ctx, testOrder, testOrder.User, &testOrder.Products); err != nil {
+				return err
 			}
-			return []ddd.IEntity{testOrder}, nil
-		}).Act(func(ctx context.Context, container ddd.RootContainer, roots ...ddd.IEntity) error {
-			testOrder := roots[0].(*order)
+
 			testOrder.Title = fmt.Sprintf("order updated %d", rand.Int63())
 			testOrder.Dirty()
 

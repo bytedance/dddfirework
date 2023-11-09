@@ -59,7 +59,7 @@ func TestCommand_Return(t *testing.T) {
 	}
 	locker := testsuit.NewMemLock()
 	executor := &MapExecutor{DB: &db}
-	res := NewEngine(locker, executor).RunCommand(ctx, &testReturnCommand{})
+	res := NewEngine(locker, executor).Run(ctx, &testReturnCommand{})
 	assert.NoError(t, res.Error)
 	assert.NotEmpty(t, res.Output)
 
@@ -68,4 +68,69 @@ func TestCommand_Return(t *testing.T) {
 	assert.NotEmpty(t, ids[1])
 	assert.Contains(t, db.Data, ids[0])
 	assert.NotContains(t, db.Data, ids[1])
+}
+
+func TestCommandMain(t *testing.T) {
+	ctx := context.Background()
+	db := TestDB{
+		Data: map[string]*testModel{},
+	}
+	locker := testsuit.NewMemLock()
+	executor := &MapExecutor{DB: &db}
+	engine := NewEngine(locker, executor)
+
+	var id string
+
+	res := engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
+		// 创建
+		o := &order{
+			Title: "testCreate",
+		}
+		if err := repo.Create(o); err != nil {
+			return err
+		}
+		if err := repo.Save(ctx); err != nil {
+			return err
+		}
+
+		id = o.GetID()
+		return nil
+	}).Save(ctx)
+
+	assert.NoError(t, res.Error)
+	assert.Contains(t, db.Data, id)
+
+	res = engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
+		o := &order{BaseEntity: NewBase(id)}
+		if err := repo.Get(ctx, o); err != nil {
+			return err
+		}
+
+		o.Title = "update"
+		o.Dirty()
+		if err := repo.Save(ctx); err != nil {
+			return err
+		}
+
+		o.Title = "update_2"
+		o.Dirty()
+		if err := repo.Save(ctx); err != nil {
+			return err
+		}
+
+		return nil
+	}).Save(ctx)
+
+	assert.NoError(t, res.Error)
+
+	po := db.Data[id]
+	assert.Equal(t, "update_2", po.Name)
+
+	res = engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
+		o := &order{BaseEntity: NewBase(id)}
+		return repo.Delete(o)
+	}).Save(ctx)
+
+	assert.NoError(t, res.Error)
+	assert.NotContains(t, db.Data, id)
 }

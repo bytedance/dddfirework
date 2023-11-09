@@ -22,6 +22,7 @@ import (
 
 var cmdType = reflect.TypeOf((*ICommand)(nil)).Elem()
 
+// Deprecated: 请直接用 ICommandMain + ICommandInit(可选) + ICommandPostSave(可选) 或者 MainFunc 的方式定义命令
 type ICommand interface {
 	// Init 会在锁和事务之前执行，可进行数据校验，前置准备工作，可选返回锁ID
 	Init(ctx context.Context) (lockKeys []string, err error)
@@ -34,6 +35,22 @@ type ICommand interface {
 	Act(ctx context.Context, container RootContainer, roots ...IEntity) (err error)
 
 	// PostSave Save 事务完成后回调，可以执行组装返回数据等操作
+	PostSave(ctx context.Context, res *Result)
+}
+
+// ICommandMain Command 的业务逻辑，对应 Build + Act 方法
+type ICommandMain interface {
+	Main(ctx context.Context, repo Repository) (err error)
+}
+
+// ICommandInit Command 的初始化方法，会在锁和事务之前执行，可进行数据校验，前置准备工作
+// 可选返回 lockKeys，框架会用 lockKeys 自动加锁
+type ICommandInit interface {
+	Init(ctx context.Context) (lockKeys []string, err error)
+}
+
+// ICommandPostSave Command 事务完成后回调，可以执行组装返回数据等操作
+type ICommandPostSave interface {
 	PostSave(ctx context.Context, res *Result)
 }
 
@@ -53,6 +70,7 @@ func (s *StageAgent) Output(data interface{}) {
 	s.st.setOutput(data)
 }
 
+// Deprecated: 请直接用 ICommandMain 或者 MainFunc 的方式定义命令
 type Command struct {
 	stage StageAgent
 }

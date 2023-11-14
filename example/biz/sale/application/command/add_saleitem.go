@@ -20,13 +20,10 @@ import (
 
 	"github.com/bytedance/dddfirework"
 	"github.com/bytedance/dddfirework/example/biz/sale/domain"
-	"github.com/bytedance/dddfirework/example/biz/sale/infrastructure/repo"
 	"github.com/bytedance/dddfirework/example/common/dto/sale"
 )
 
 type AddSaleItemCommand struct {
-	dddfirework.Command
-
 	orderID string
 	item    *sale.SaleItem
 }
@@ -39,16 +36,11 @@ func (c *AddSaleItemCommand) Init(ctx context.Context) ([]string, error) {
 	return []string{c.orderID}, nil
 }
 
-func (c *AddSaleItemCommand) Build(ctx context.Context, h dddfirework.DomainBuilder) (roots []dddfirework.IEntity, err error) {
-	order, err := repo.GetOrder(ctx, h, c.orderID)
-	if err != nil {
-		return nil, err
+func (c *AddSaleItemCommand) Main(ctx context.Context, repo *dddfirework.Repository) error {
+	order := &domain.Order{ID: c.orderID}
+	if err := repo.Get(ctx, order); err != nil {
+		return err
 	}
-	return []dddfirework.IEntity{order}, nil
-}
-
-func (c *AddSaleItemCommand) Act(ctx context.Context, container dddfirework.RootContainer, roots ...dddfirework.IEntity) error {
-	order := roots[0].(*domain.Order)
 	order.AddSaleItem(c.item.Code, c.item.Name, c.item.Price, c.item.Count)
 	return nil
 }

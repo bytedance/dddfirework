@@ -20,7 +20,6 @@ import (
 
 	"github.com/bytedance/dddfirework"
 	"github.com/bytedance/dddfirework/example/biz/sale/domain"
-	"github.com/bytedance/dddfirework/example/biz/sale/infrastructure/repo"
 )
 
 type UpdateOrderOpt struct {
@@ -28,8 +27,6 @@ type UpdateOrderOpt struct {
 }
 
 type UpdateOrderCommand struct {
-	dddfirework.Command
-
 	orderID string
 	opt     UpdateOrderOpt
 }
@@ -45,16 +42,11 @@ func (c *UpdateOrderCommand) Init(ctx context.Context) (lockIDs []string, err er
 	return []string{c.orderID}, nil
 }
 
-func (c *UpdateOrderCommand) Build(ctx context.Context, builder dddfirework.DomainBuilder) (roots []dddfirework.IEntity, err error) {
-	order, err := repo.GetOrder(ctx, builder, c.orderID)
-	if err != nil {
-		return nil, err
+func (c *UpdateOrderCommand) Main(ctx context.Context, repo *dddfirework.Repository) error {
+	order := &domain.Order{ID: c.orderID}
+	if err := repo.Get(ctx, order); err != nil {
+		return err
 	}
-	return []dddfirework.IEntity{order}, nil
-}
-
-func (c *UpdateOrderCommand) Act(ctx context.Context, container dddfirework.RootContainer, roots ...dddfirework.IEntity) error {
-	order := roots[0].(*domain.Order)
 	order.Update(domain.UpdateOrderOpt{Remark: c.opt.Remark})
 	return nil
 }

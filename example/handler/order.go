@@ -39,7 +39,7 @@ func (s *SaleServiceImpl) CreateOrder(ctx context.Context, req *CreateOrderReque
 	cmd := command.NewCreateOrderCommand(
 		req.User, req.Items, req.Coupons,
 	)
-	res := s.engine.RunCommand(ctx, cmd)
+	res := s.engine.Run(ctx, cmd)
 	if res.Error != nil {
 		return nil, res.Error
 	}
@@ -48,7 +48,7 @@ func (s *SaleServiceImpl) CreateOrder(ctx context.Context, req *CreateOrderReque
 
 // UpdateOrder implements the SaleServiceImpl interface.
 func (s *SaleServiceImpl) UpdateOrder(ctx context.Context, req *UpdateOrderRequest) (resp *UpdateOrderResponse, err error) {
-	if err := s.engine.RunCommand(ctx, command.NewUpdateOrderCommand(
+	if err := s.engine.Run(ctx, command.NewUpdateOrderCommand(
 		req.ID, command.UpdateOrderOpt{Remark: req.Remark},
 	)).Error; err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func (s *SaleServiceImpl) UpdateOrder(ctx context.Context, req *UpdateOrderReque
 
 // DeleteOrder implements the SaleServiceImpl interface.
 func (s *SaleServiceImpl) DeleteOrder(ctx context.Context, req *DeleteOrderRequest) (resp *DeleteOrderResponse, err error) {
-	if err := s.engine.RunCommand(ctx, command.NewDeleteOrderCommand(
+	if err := s.engine.Run(ctx, command.NewDeleteOrderCommand(
 		req.ID,
 	)).Error; err != nil {
 		return nil, err
@@ -100,7 +100,7 @@ func (s *SaleServiceImpl) GetOrderList(ctx context.Context, req *GetOrderListReq
 
 // AddSaleItem implements the SaleServiceImpl interface.
 func (s *SaleServiceImpl) AddSaleItem(ctx context.Context, req *AddSaleItemRequest) (resp *AddSaleItemResponse, err error) {
-	if err := s.engine.RunCommand(ctx, command.NewAddSaleItemCommand(
+	if err := s.engine.Run(ctx, command.NewAddSaleItemCommand(
 		req.OrderID, req.Item,
 	)).Error; err != nil {
 		return nil, err
@@ -110,7 +110,7 @@ func (s *SaleServiceImpl) AddSaleItem(ctx context.Context, req *AddSaleItemReque
 
 // AddCoupon implements the SaleServiceImpl interface.
 func (s *SaleServiceImpl) AddCoupon(ctx context.Context, req *AddCouponRequest) (resp *AddCouponResponse, err error) {
-	if err := s.engine.RunCommand(ctx, command.NewAddCouponCommand(
+	if err := s.engine.Run(ctx, command.NewAddCouponCommand(
 		req.OrderID, req.Coupon,
 	)).Error; err != nil {
 		return nil, err

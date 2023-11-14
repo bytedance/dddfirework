@@ -205,7 +205,7 @@ func TestRootContainer(t *testing.T) {
 
 func TestBuildError(t *testing.T) {
 	ctx := context.Background()
-	res := NewEngine(nil, nil, WithoutTransaction).NewStage().Main(func(ctx context.Context, repo Repository) error {
+	res := NewEngine(nil, nil, WithoutTransaction).NewStage().Main(func(ctx context.Context, repo *Repository) error {
 		return fmt.Errorf("test")
 	}).Save(ctx)
 	assert.Error(t, res.Error)
@@ -266,8 +266,8 @@ func TestEntityMove(t *testing.T) {
 	engine := NewEngine(testsuit.NewMemLock(), &MapExecutor{DB: &db})
 	engine.Create(ctx, testOrder1, testOrder2)
 
-	res := engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
-		if err := repo.GetManual(ctx, func(ctx context.Context, root ...IEntity) {}, testOrder1, testOrder2); err != nil {
+	res := engine.NewStage().Main(func(ctx context.Context, repo *Repository) error {
+		if err := repo.CustomGet(ctx, func(ctx context.Context, root ...IEntity) {}, testOrder1, testOrder2); err != nil {
 			return err
 		}
 		testOrder1.Products = nil
@@ -443,12 +443,13 @@ func TestEventPersist(t *testing.T) {
 				ID:   event.ID,
 				Name: string(event.Type),
 			}, nil
-		})).Run(ctx, func(ctx context.Context, repo Repository) error {
+		})).Run(ctx, func(ctx context.Context, repo *Repository) error {
 		testOrder = &order{
 			Title: "order1",
 		}
 		testOrder.AddEvent(&testEvent{Data: "hello"})
-		return repo.Create(testOrder)
+		repo.Add(testOrder)
+		return nil
 	})
 	assert.NoError(t, res.Error)
 	assert.NotEmpty(t, testOrder.GetEvents())
@@ -499,8 +500,8 @@ func BenchmarkUpdateOrders(b *testing.B) {
 		}
 		title := fmt.Sprintf("update %d", j)
 		newID := fmt.Sprintf("new%d", j)
-		res := NewEngine(nil, &MapExecutor{DB: &db}).Run(context.Background(), func(ctx context.Context, repo Repository) error {
-			if err := repo.GetManual(ctx, func(ctx context.Context, root ...IEntity) {}, testOrder); err != nil {
+		res := NewEngine(nil, &MapExecutor{DB: &db}).Run(context.Background(), func(ctx context.Context, repo *Repository) error {
+			if err := repo.CustomGet(ctx, func(ctx context.Context, root ...IEntity) {}, testOrder); err != nil {
 				return err
 			}
 			testOrder.Title = title

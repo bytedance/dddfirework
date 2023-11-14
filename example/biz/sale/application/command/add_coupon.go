@@ -20,13 +20,10 @@ import (
 
 	ddd "github.com/bytedance/dddfirework"
 	"github.com/bytedance/dddfirework/example/biz/sale/domain"
-	"github.com/bytedance/dddfirework/example/biz/sale/infrastructure/repo"
 	"github.com/bytedance/dddfirework/example/common/dto/sale"
 )
 
 type AddCouponCommand struct {
-	ddd.Command
-
 	orderID string
 	coupon  *sale.Coupon
 }
@@ -42,16 +39,11 @@ func (c *AddCouponCommand) Init(ctx context.Context) ([]string, error) {
 	return []string{c.orderID}, nil
 }
 
-func (c *AddCouponCommand) Build(ctx context.Context, builder ddd.DomainBuilder) (roots []ddd.IEntity, err error) {
-	order, err := repo.GetOrder(ctx, builder, c.orderID)
-	if err != nil {
-		return nil, err
+func (c *AddCouponCommand) Main(ctx context.Context, repo *ddd.Repository) error {
+	order := &domain.Order{ID: c.orderID}
+	if err := repo.Get(ctx, order); err != nil {
+		return err
 	}
-	return []ddd.IEntity{order}, nil
-}
-
-func (c *AddCouponCommand) Act(ctx context.Context, container ddd.RootContainer, roots ...ddd.IEntity) error {
-	order := roots[0].(*domain.Order)
 	if err := order.AddCoupon(c.coupon.ID, c.coupon.Rule, c.coupon.Discount); err != nil {
 		return err
 	}

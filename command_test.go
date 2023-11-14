@@ -81,14 +81,13 @@ func TestCommandMain(t *testing.T) {
 
 	var id string
 
-	res := engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
+	res := engine.NewStage().Main(func(ctx context.Context, repo *Repository) error {
 		// 创建
 		o := &order{
 			Title: "testCreate",
 		}
-		if err := repo.Create(o); err != nil {
-			return err
-		}
+		repo.Add(o)
+
 		if err := repo.Save(ctx); err != nil {
 			return err
 		}
@@ -100,7 +99,7 @@ func TestCommandMain(t *testing.T) {
 	assert.NoError(t, res.Error)
 	assert.Contains(t, db.Data, id)
 
-	res = engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
+	res = engine.NewStage().Main(func(ctx context.Context, repo *Repository) error {
 		o := &order{BaseEntity: NewBase(id)}
 		if err := repo.Get(ctx, o); err != nil {
 			return err
@@ -126,9 +125,10 @@ func TestCommandMain(t *testing.T) {
 	po := db.Data[id]
 	assert.Equal(t, "update_2", po.Name)
 
-	res = engine.NewStage().Main(func(ctx context.Context, repo Repository) error {
+	res = engine.NewStage().Main(func(ctx context.Context, repo *Repository) error {
 		o := &order{BaseEntity: NewBase(id)}
-		return repo.Delete(o)
+		repo.Remove(o)
+		return nil
 	}).Save(ctx)
 
 	assert.NoError(t, res.Error)

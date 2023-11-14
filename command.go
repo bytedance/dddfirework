@@ -40,7 +40,7 @@ type ICommand interface {
 
 // ICommandMain Command 的业务逻辑，对应 Build + Act 方法
 type ICommandMain interface {
-	Main(ctx context.Context, repo Repository) (err error)
+	Main(ctx context.Context, repo *Repository) (err error)
 }
 
 // ICommandInit Command 的初始化方法，会在锁和事务之前执行，可进行数据校验，前置准备工作

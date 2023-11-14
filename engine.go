@@ -182,6 +182,15 @@ func (h *RootContainer) Remove(root IEntity) {
 // Repository 聚合根实体仓库
 type Repository struct {
 	stage *Stage
+	errs  []error
+}
+
+func (r *Repository) appendError(e error) {
+	r.errs = append(r.errs, e)
+}
+
+func (r *Repository) getError() error {
+	return errors.Join(r.errs...)
 }
 
 // Get 查询并构建聚合根
@@ -202,8 +211,8 @@ func (r *Repository) Get(ctx context.Context, root IEntity, children ...interfac
 	return r.stage.updateSnapshot()
 }
 
-// GetManual 自定义函数获取聚合根实体，并添加到快照
-func (r *Repository) GetManual(ctx context.Context, getter func(ctx context.Context, root ...IEntity), roots ...IEntity) error {
+// CustomGet 自定义函数获取聚合根实体，并添加到快照
+func (r *Repository) CustomGet(ctx context.Context, getter func(ctx context.Context, root ...IEntity), roots ...IEntity) error {
 	getter(ctx, roots...)
 
 	for _, root := range roots {
@@ -218,21 +227,22 @@ func (r *Repository) GetManual(ctx context.Context, getter func(ctx context.Cont
 	return r.stage.updateSnapshot()
 }
 
-// Create 创建聚合根
-func (r *Repository) Create(roots ...IEntity) error {
+// Add 添加聚合根到仓库
+func (r *Repository) Add(roots ...IEntity) {
 	for _, root := range roots {
 		if r.stage.hasSnapshot(root) {
-			return fmt.Errorf("root must be a new entity")
+			r.appendError(fmt.Errorf("root must be a new entity"))
+			return
 		}
 		if err := r.stage.meta.Add(root); err != nil {
-			return err
+			r.appendError(err)
+			return
 		}
 	}
-	return nil
 }
 
-// Delete 删除聚合根，root.GetID 不能为空
-func (r *Repository) Delete(roots ...IEntity) error {
+// Remove 删除聚合根，root.GetID 不能为空
+func (r *Repository) Remove(roots ...IEntity) {
 	toCreate := make([]IEntity, 0)
 	for _, root := range roots {
 		if !r.stage.meta.Has(root) {
@@ -240,30 +250,32 @@ func (r *Repository) Delete(roots ...IEntity) error {
 		}
 	}
 	if len(toCreate) > 0 {
-		if err := r.Create(toCreate...); err != nil {
-			return err
-		}
+		r.Add(toCreate...)
 		if err := r.stage.updateSnapshot(); err != nil {
-			return err
+			r.appendError(err)
+			return
 		}
 	}
 
 	for _, root := range roots {
 		if err := r.stage.meta.Remove(root); err != nil {
-			return err
+			r.appendError(err)
+			return
 		}
 	}
-	return nil
 }
 
 // Save 执行一次保存，并刷新快照
 func (r *Repository) Save(ctx context.Context) error {
+	if err := r.getError(); err != nil {
+		return err
+	}
 	return r.stage.commit(ctx)
 }
 
 type BuildFunc func(ctx context.Context, h DomainBuilder) (roots []IEntity, err error)
 type ActFunc func(ctx context.Context, container RootContainer, roots ...IEntity) error
-type MainFunc func(ctx context.Context, repo Repository) error
+type MainFunc func(ctx context.Context, repo *Repository) error
 type PostSaveFunc func(ctx context.Context, res *Result)
 
 // EventHandlerConstruct EventHandler 的构造函数，带一个入参和一个返回值，入参是与事件类型匹配的事件数据指针类型，返回值是 ICommand
@@ -427,14 +439,16 @@ func (e *Engine) NewStage() *Stage {
 }
 
 func (e *Engine) Create(ctx context.Context, roots ...IEntity) *Result {
-	return e.NewStage().Main(func(ctx context.Context, repo Repository) error {
-		return repo.Create(roots...)
+	return e.NewStage().Main(func(ctx context.Context, repo *Repository) error {
+		repo.Add(roots...)
+		return nil
 	}).Save(ctx)
 }
 
 func (e *Engine) Delete(ctx context.Context, roots ...IEntity) *Result {
-	return e.NewStage().Main(func(ctx context.Context, repo Repository) error {
-		return repo.Delete(roots...)
+	return e.NewStage().Main(func(ctx context.Context, repo *Repository) error {
+		repo.Remove(roots...)
+		return nil
 	}).Save(ctx)
 }
 
@@ -703,7 +717,7 @@ func (e *Stage) runCommand(ctx context.Context, c ICommand) *Result {
 	if err != nil {
 		return ResultErrOrBreak(err)
 	}
-	return e.WithOption(PostSaveOption(c.PostSave)).Lock(keys...).Main(func(ctx context.Context, repo Repository) error {
+	return e.WithOption(PostSaveOption(c.PostSave)).Lock(keys...).Main(func(ctx context.Context, repo *Repository) error {
 		buildRoots, err := c.Build(ctx, DomainBuilder{stage: repo.stage})
 		if err != nil {
 			return err
@@ -752,7 +766,7 @@ func (e *Stage) Run(ctx context.Context, cmd interface{}) *Result {
 			options = append(options, PostSaveOption(cmdPostSave.PostSave))
 		}
 		return e.WithOption(options...).Lock(keys...).Main(c.Main).Save(ctx)
-	case func(ctx context.Context, repo Repository) error:
+	case func(ctx context.Context, repo *Repository) error:
 		return e.Main(c).Save(ctx)
 	}
 	panic("cmd is invalid")
@@ -1078,8 +1092,12 @@ func (e *Stage) do(ctx context.Context) *Result {
 	// 创建聚合
 	var err error
 	if e.main != nil {
-		if err := e.main(ctx, Repository{stage: e}); err != nil {
+		repo := &Repository{stage: e}
+		if err := e.main(ctx, repo); err != nil {
 			return ResultErrOrBreak(err)
+		}
+		if err := repo.getError(); err != nil {
+			return ResultError(err)
 		}
 	}
 

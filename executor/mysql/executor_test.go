@@ -341,14 +341,15 @@ func TestRollback(t *testing.T) {
 	ctx := context.Background()
 
 	engine := ddd.NewEngine(testsuit.NewMemLock(), NewExecutor(db))
-	res := engine.Run(ctx, func(ctx context.Context, repo ddd.Repository) error {
-		return repo.Create(&order{
+	res := engine.Run(ctx, func(ctx context.Context, repo *ddd.Repository) error {
+		repo.Add(&order{
 			ID:    "testrollback",
 			Title: "testrollback",
 		}, &order{
 			ID:    "testrollback",
 			Title: "testrollback",
 		})
+		return nil
 	})
 	assert.NotNil(t, res.Error)
 	assert.ErrorIs(t, db.First(&orderPO{}, "id = ?", "testrollback").Error, gorm.ErrRecordNotFound)
@@ -405,7 +406,7 @@ func BenchmarkUpdate(b *testing.B) {
 
 	engine := ddd.NewEngine(nil, NewExecutor(db))
 	for i := 0; i < b.N; i++ {
-		if res := engine.NewStage().Main(func(ctx context.Context, repo ddd.Repository) error {
+		if res := engine.NewStage().Main(func(ctx context.Context, repo *ddd.Repository) error {
 			testOrder := &order{
 				ID:       "order1",
 				User:     &user{},

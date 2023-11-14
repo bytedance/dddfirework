@@ -23,8 +23,6 @@ import (
 )
 
 type DeleteOrderCommand struct {
-	dddfirework.Command
-
 	orderID string
 }
 
@@ -34,11 +32,7 @@ func NewDeleteOrderCommand(orderID string) *DeleteOrderCommand {
 	}
 }
 
-func (c *DeleteOrderCommand) Build(ctx context.Context, builder dddfirework.DomainBuilder) (roots []dddfirework.IEntity, err error) {
-	return []dddfirework.IEntity{&domain.Order{ID: c.orderID}}, nil
-}
-
-func (c *DeleteOrderCommand) Act(ctx context.Context, container dddfirework.RootContainer, roots ...dddfirework.IEntity) error {
-	container.Remove(roots[0])
+func (c *DeleteOrderCommand) Main(ctx context.Context, repo *dddfirework.Repository) error {
+	repo.Remove(&domain.Order{ID: c.orderID})
 	return nil
 }

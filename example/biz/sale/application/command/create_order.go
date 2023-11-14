@@ -28,8 +28,6 @@ type CreateOrderResult struct {
 }
 
 type CreateOrderCommand struct {
-	dddfirework.Command
-
 	userID  string
 	items   []*sale.SaleItem
 	coupons []*sale.Coupon
@@ -45,26 +43,18 @@ func NewCreateOrderCommand(userID string, items []*sale.SaleItem, coupons []*sal
 	}
 }
 
-func (c *CreateOrderCommand) Act(ctx context.Context, container dddfirework.RootContainer, roots ...dddfirework.IEntity) error {
+func (c *CreateOrderCommand) Main(ctx context.Context, repo *dddfirework.Repository) error {
 	order, err := domain.NewOrder(c.userID, c.items, c.coupons)
 	if err != nil {
 		return err
 	}
 
-	container.Add(order)
+	repo.Add(order)
 
-	//Commit 操作为可选项，目的是为了即刻获得待新建的订单 ID，构造返回值
-	if err := c.Commit(ctx); err != nil {
+	// 持久化后为新实体自动设置 ID
+	if err := repo.Save(ctx); err != nil {
 		return err
 	}
-	c.Output(order)
+	c.Result = &CreateOrderResult{OrderID: order.ID}
 	return nil
-}
-
-func (c *CreateOrderCommand) PostSave(ctx context.Context, res *dddfirework.Result) {
-	if res.Error == nil {
-		c.Result = &CreateOrderResult{
-			OrderID: res.Output.(*domain.Order).ID,
-		}
-	}
 }

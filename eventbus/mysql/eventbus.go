@@ -19,19 +19,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	stdlog "log"
-	"os"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/go-logr/logr"
-	"github.com/go-logr/stdr"
 	"github.com/robfig/cron"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/bytedance/dddfirework"
+	"github.com/bytedance/dddfirework/logger"
+	"github.com/bytedance/dddfirework/logger/stdr"
 )
 
 const retryInterval = time.Second * 3
@@ -52,7 +51,7 @@ var ErrInvalidDB = fmt.Errorf("invalid db")
 var ErrNoTransaction = fmt.Errorf("no transaction")
 var ErrServiceNotCreate = fmt.Errorf("service not create")
 
-var defaultLogger = stdr.New(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile)).WithName("mysql_eventbus")
+var defaultLogger = stdr.NewStdr("mysql_eventbus")
 
 type IRetryStrategy interface {
 	// Next 获取下一次重试的策略，返回 nil 表示不再重试
@@ -440,7 +439,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (suc
 }
 
 func (e *EventBus) handleEvents() error {
-	e.logger.V(4).Info("handle events")
+	e.logger.V(logger.LevelDebug).Info("handle events")
 
 	return e.db.Transaction(func(tx *gorm.DB) error {
 		ctx := context.Background()

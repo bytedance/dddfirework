@@ -20,22 +20,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	stdlog "log"
-	"os"
 	"reflect"
 	"sort"
 	"strings"
 
 	"github.com/go-logr/logr"
-	"github.com/go-logr/stdr"
 	"github.com/rs/xid"
+
+	"github.com/bytedance/dddfirework/logger/stdr"
 )
 
 var ErrBreak = fmt.Errorf("break process") // 中断流程，不返回错误
 var ErrEntityNotFound = fmt.Errorf("entity not found")
 var ErrEntityRepeated = fmt.Errorf("entity already added")
 
-var defaultLogger = stdr.New(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile)).WithName("ddd_engine")
+var defaultLogger = stdr.NewStdr("ddd_engine")
 
 type ILock interface {
 	Lock(ctx context.Context, key string) (keyLock interface{}, err error)

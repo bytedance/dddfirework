@@ -133,6 +133,7 @@ type Options struct {
 	ConsumeConcurrent int           // 事件消费的并发数
 	RetryStrategy     IRetryStrategy
 	TXCheckTimeout    time.Duration
+	Logger            logr.Logger
 }
 
 type Option func(opt *Options)
@@ -170,6 +171,7 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 		ConsumeConcurrent: consumeConcurrent,
 		LimitPerRun:       limitPerRun,
 		TXCheckTimeout:    txCheckTimeout,
+		Logger:            defaultLogger,
 	}
 	for _, o := range options {
 		o(&opt)
@@ -194,7 +196,7 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 	eb := &EventBus{
 		serviceName:   serviceName,
 		db:            db,
-		logger:        defaultLogger,
+		logger:        opt.Logger,
 		retryStrategy: strategy,
 		opt:           opt,
 		txKey:         contextKey(fmt.Sprintf("eventbus_tx_%d", time.Now().Unix())),
@@ -438,7 +440,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (suc
 }
 
 func (e *EventBus) handleEvents() error {
-	e.logger.Info("handle events")
+	e.logger.V(4).Info("handle events")
 
 	return e.db.Transaction(func(tx *gorm.DB) error {
 		ctx := context.Background()

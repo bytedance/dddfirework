@@ -68,10 +68,10 @@ func TestDiffModel(t *testing.T) {
 
 	result := DiffModel(p1, p2)
 	assert.NotEmpty(t, result)
-	assert.Contains(t, result, "id")
-	assert.Contains(t, result, "item_price")
-	assert.Contains(t, result, "diff_ptr_value")
-	assert.Contains(t, result, "base_created_at")
-	assert.Contains(t, result, "slice_value")
-	assert.NotContains(t, result, "same_ptr_value")
+	assert.Contains(t, result, "ID")
+	assert.Contains(t, result, "ItemPrice")
+	assert.Contains(t, result, "DiffPtrValue")
+	assert.Contains(t, result, "CreatedAt")
+	assert.Contains(t, result, "SliceValue")
+	assert.NotContains(t, result, "SamePtrValue")
 }

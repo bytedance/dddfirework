@@ -18,30 +18,19 @@ package mysql
 import (
 	"reflect"
 	"strings"
-
-	"gorm.io/gorm/schema"
+	"sync"
 )
 
-var strategy = schema.NamingStrategy{IdentifierMaxLength: 64}
+var schemaCache = &sync.Map{}
 
 func hasValue(tag, attr string) bool {
 	parts := strings.Split(tag, ";")
 	for _, p := range parts {
-		if strings.HasPrefix(p, attr) {
+		if strings.HasPrefix(strings.ToUpper(p), strings.ToUpper(attr)) {
 			return true
 		}
 	}
 	return false
-}
-
-func getTagValue(tag, attr string) string {
-	parts := strings.Split(tag, ";")
-	for _, p := range parts {
-		if strings.HasPrefix(p, attr+":") {
-			return strings.TrimSpace(strings.TrimPrefix(p, attr+":"))
-		}
-	}
-	return ""
 }
 
 func diffStruct(currVal, prevVal reflect.Value) []string {
@@ -53,21 +42,11 @@ func diffStruct(currVal, prevVal reflect.Value) []string {
 		if !fieldVal.CanInterface() {
 			continue
 		}
-		// 默认使用 gorm 的名称规则
-		fieldName := strategy.ColumnName("", field.Name)
+		fieldName := field.Name
 		fieldTag := field.Tag.Get("gorm")
-		if fieldTag != "" && hasValue(fieldTag, "column") {
-			fieldName = getTagValue(fieldTag, "column")
-		}
 		if fieldVal.Kind() == reflect.Struct && (field.Anonymous || hasValue(fieldTag, "embedded")) {
-			prefix := ""
-			if fieldTag != "" && hasValue(fieldTag, "embeddedPrefix") {
-				prefix = getTagValue(fieldTag, "embeddedPrefix")
-			}
 			structDiff := diffStruct(fieldVal, prevFiledVal)
-			for _, k := range structDiff {
-				result = append(result, prefix+k)
-			}
+			result = append(result, structDiff...)
 		} else if fieldVal.Comparable() {
 			if fieldVal.Equal(prevFiledVal) {
 				continue
@@ -78,7 +57,6 @@ func diffStruct(currVal, prevVal reflect.Value) []string {
 			result = append(result, fieldName)
 		}
 	}
-	result = append(result, "fake")
 	return result
 }
 

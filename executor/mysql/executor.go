@@ -21,9 +21,9 @@ import (
 	"reflect"
 	"time"
 
-	"gorm.io/gorm"
-
 	ddd "github.com/bytedance/dddfirework"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 var ErrInvalidDB = fmt.Errorf("invalid db")
@@ -101,14 +101,32 @@ var opMap = map[ddd.OpType]execFunc{
 	},
 	ddd.OpDelete: func(db *gorm.DB, a *ddd.Action) error {
 		po := a.Models[0]
-		poType := reflect.Indirect(reflect.ValueOf(po)).Type()
-		newPO := reflect.New(poType).Interface()
-
-		ids := make([]string, 0)
-		for _, m := range a.Models {
-			ids = append(ids, m.GetID())
+		s, err := schema.Parse(po, schemaCache, db.NamingStrategy)
+		if err != nil {
+			return err
 		}
-		return db.Where("id in ?", ids).Delete(newPO).Error
+
+		if len(s.PrimaryFields) == 1 {
+			// 单主键支持批量删除
+			pk := s.PrimaryFields[0].DBName
+			poType := reflect.Indirect(reflect.ValueOf(po)).Type()
+			newPO := reflect.New(poType).Interface()
+			if len(a.Models) == 1 {
+				return db.Where(pk+" = ?", a.Models[0].GetID()).Delete(newPO).Error
+			}
+			ids := make([]string, 0)
+			for _, m := range a.Models {
+				ids = append(ids, m.GetID())
+			}
+			return db.Where(pk+" in ?", ids).Delete(newPO).Error
+		}
+		// 复合主键的一个个删
+		for _, m := range a.Models {
+			if err := db.Delete(m).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	},
 	ddd.OpQuery: func(db *gorm.DB, a *ddd.Action) error {
 		res := db.Where(a.Query).Find(a.QueryResult)

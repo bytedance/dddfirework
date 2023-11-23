@@ -79,13 +79,22 @@ func (o *order) GetID() string {
 	return o.ID
 }
 
+type basePO struct {
+	ID string `gorm:"primaryKey;column:uid"`
+}
+
 type orderPO struct {
-	ID    string `gorm:"primaryKey;column:id"`
+	BasePO basePO `gorm:"embedded"`
+
 	Title string `gorm:"column:title"`
 }
 
+func newOrderPO(id string) *orderPO {
+	return &orderPO{BasePO: basePO{ID: id}}
+}
+
 func (o *orderPO) GetID() string {
-	return o.ID
+	return o.BasePO.ID
 }
 
 func (o *orderPO) TableName() string {
@@ -142,12 +151,12 @@ func initModel(db *gorm.DB) {
 	RegisterEntity2Model(&order{}, func(entity, parent ddd.IEntity, op ddd.OpType) (IModel, error) {
 		order := entity.(*order)
 		return &orderPO{
-			ID:    order.GetID(),
-			Title: order.Title,
+			BasePO: basePO{ID: order.GetID()},
+			Title:  order.Title,
 		}, nil
 	}, func(po IModel, do ddd.IEntity) error {
 		s, t := po.(*orderPO), do.(*order)
-		t.SetID(s.ID)
+		t.SetID(s.GetID())
 		t.Title = s.Title
 		return nil
 	})
@@ -287,12 +296,12 @@ func TestExecutor(t *testing.T) {
 	res := engine.Create(ctx, testOrder, testDeleteOrder)
 	assert.NoError(t, res.Error)
 
-	assert.NoError(t, db.First(&orderPO{}, "id = ?", "order1").Error)
-	assert.NoError(t, db.First(&productPO{}, "id = ?", "product1").Error)
-	assert.NoError(t, db.First(&productPO{}, "id = ?", "product2").Error)
-	assert.NoError(t, db.First(&orderPO{}, "id = ?", "order2").Error)
+	assert.NoError(t, db.First(newOrderPO("order1")).Error)
+	assert.NoError(t, db.First(&productPO{ID: "product1"}).Error)
+	assert.NoError(t, db.First(&productPO{ID: "product2"}).Error)
+	assert.NoError(t, db.First(newOrderPO("order2")).Error)
 
-	res = engine.RunCommand(ctx, &Case{
+	res = engine.Run(ctx, &Case{
 		db:           db,
 		TestOrderID:  "order1",
 		TestDeleteID: "order2",
@@ -312,8 +321,8 @@ func TestExecutor(t *testing.T) {
 	assert.Len(t, p.Tags, 2)
 
 	// 测试删除根实体、子实体
-	assert.ErrorIs(t, db.First(&orderPO{}, "id = ?", "order2").Error, gorm.ErrRecordNotFound)
-	assert.ErrorIs(t, db.First(&productPO{}, "id = ?", "product2").Error, gorm.ErrRecordNotFound)
+	assert.ErrorIs(t, db.First(newOrderPO("order2")).Error, gorm.ErrRecordNotFound)
+	assert.ErrorIs(t, db.First(&productPO{ID: "product2"}).Error, gorm.ErrRecordNotFound)
 }
 
 func TestDelete(t *testing.T) {
@@ -327,12 +336,12 @@ func TestDelete(t *testing.T) {
 	engine := ddd.NewEngine(testsuit.NewMemLock(), NewExecutor(db))
 	res := engine.Create(ctx, o)
 	assert.NoError(t, res.Error)
-	assert.NoError(t, db.First(&orderPO{}, "id = ?", o.ID).Error)
+	assert.NoError(t, db.First(newOrderPO(o.ID)).Error)
 
 	res = engine.Delete(ctx, o)
 	assert.NoError(t, res.Error)
 
-	assert.ErrorIs(t, db.First(&orderPO{}, "id = ?", o.ID).Error, gorm.ErrRecordNotFound)
+	assert.ErrorIs(t, db.First(newOrderPO(o.ID)).Error, gorm.ErrRecordNotFound)
 }
 
 func TestRollback(t *testing.T) {
@@ -352,7 +361,7 @@ func TestRollback(t *testing.T) {
 		return nil
 	})
 	assert.NotNil(t, res.Error)
-	assert.ErrorIs(t, db.First(&orderPO{}, "id = ?", "testrollback").Error, gorm.ErrRecordNotFound)
+	assert.ErrorIs(t, db.First(newOrderPO("testrollback")).Error, gorm.ErrRecordNotFound)
 }
 
 func initBenchmark(db *gorm.DB) {

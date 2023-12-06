@@ -28,7 +28,15 @@ type RuleEngine interface {
 	Validate(order *Order, rule string) error
 }
 
-var ruler RuleEngine
+var ruler OrderRuleEngine
+
+type OrderRuleEngine struct {
+}
+
+func (o *OrderRuleEngine) Validate(order *Order, rule string) error {
+	// validate here
+	return nil
+}
 
 type UpdateOrderOpt struct {
 	Remark *string
@@ -147,6 +155,8 @@ func (o *Order) AddCoupon(couponID, rule string, discount int64) error {
 		CouponID: couponID,
 		Rule:     rule,
 		Discount: discount,
+
+		order: o,
 	})
 	if invalid := o.fixCoupons(); len(invalid) > 0 {
 		return fmt.Errorf("coupon invalid")

@@ -16,14 +16,22 @@
 package event_handler
 
 import (
+	"context"
+
 	ddd "github.com/bytedance/dddfirework"
 	"github.com/bytedance/dddfirework/example/common/domain_event/sale"
 )
 
+// OnOrderCreatedHandler 实现了 ICommandMain 的接口
 type OnOrderCreatedHandler struct {
-	ddd.Command
-
 	event *sale.OrderCreatedEvent
+}
+
+func (h *OnOrderCreatedHandler) Main(ctx context.Context, repo *ddd.Repository) (err error) {
+	// handle order created event here
+	logger.Info("order created")
+
+	return nil
 }
 
 func NewOnOrderCreatedHandler(evt *sale.OrderCreatedEvent) *OnOrderCreatedHandler {

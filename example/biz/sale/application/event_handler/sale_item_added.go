@@ -16,18 +16,23 @@
 package event_handler
 
 import (
+	"context"
+
 	ddd "github.com/bytedance/dddfirework"
 	"github.com/bytedance/dddfirework/example/common/domain_event/sale"
+	"github.com/bytedance/dddfirework/logger/stdr"
 )
 
-type OnSaleItemAddedHandler struct {
-	ddd.Command
+var logger = stdr.NewStdr("handler")
 
-	event *sale.OrderSaleItemAddedEvent
+// OnSaleItemAddedHandler 是 MainFunc 类型
+func OnSaleItemAddedHandler(ctx context.Context, repo *ddd.Repository) (err error) {
+	// handle sale item added event here
+	logger.Info("sale item added")
+
+	return nil
 }
 
-func NewOnSaleItemAddedHandler(evt *sale.OrderSaleItemAddedEvent) *OnSaleItemAddedHandler {
-	return &OnSaleItemAddedHandler{
-		event: evt,
-	}
+func NewOnSaleItemAddedHandler(evt *sale.OrderSaleItemAddedEvent) ddd.MainFunc {
+	return OnSaleItemAddedHandler
 }

@@ -36,6 +36,11 @@ import (
 )
 
 func initPO(db *gorm.DB) {
+	// 可选，如果使用 mysql 实现 eventbus，需要提前建表。
+	if err := db.AutoMigrate(&db_eventbus.EventPO{}, &db_eventbus.Transaction{}, &db_eventbus.ServicePO{}); err != nil {
+		panic(err)
+	}
+
 	if err := db.AutoMigrate(&po.OrderPO{}, &po.CouponPO{}, &po.SaleItemPO{}); err != nil {
 		panic(err)
 	}

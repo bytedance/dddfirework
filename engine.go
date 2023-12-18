@@ -287,7 +287,9 @@ type EventHandlerConstruct interface{}
 
 type Options struct {
 	WithTransaction bool
-	RecursiveDelete bool         // 删除根实体是否递归删除所有子实体
+	RecursiveDelete bool // 删除根实体是否递归删除所有子实体
+	Locker          ILock
+	Executor        IExecutor
 	EventPersist    EventPersist // 是否保存领域事件到 DB
 	Logger          logr.Logger
 	EventBus        IEventBus
@@ -326,6 +328,30 @@ func (t LoggerOption) ApplyToOptions(opts *Options) {
 
 func WithLogger(logger logr.Logger) LoggerOption {
 	return LoggerOption{logger: logger}
+}
+
+type LockOption struct {
+	lock ILock
+}
+
+func (t LockOption) ApplyToOptions(opts *Options) {
+	opts.Locker = t.lock
+}
+
+func WithLock(lock ILock) LockOption {
+	return LockOption{lock: lock}
+}
+
+type ExecutorOption struct {
+	executor IExecutor
+}
+
+func (t ExecutorOption) ApplyToOptions(opts *Options) {
+	opts.Executor = t.executor
+}
+
+func WithExecutor(executor IExecutor) ExecutorOption {
+	return ExecutorOption{executor: executor}
 }
 
 type EventBusOption struct {
@@ -398,6 +424,9 @@ type Engine struct {
 
 func NewEngine(l ILock, e IExecutor, opts ...Option) *Engine {
 	options := Options{
+		Locker:   l,
+		Executor: e,
+
 		// 默认开启事务
 		WithTransaction: true,
 		Logger:          defaultLogger,
@@ -416,8 +445,8 @@ func NewEngine(l ILock, e IExecutor, opts ...Option) *Engine {
 	timer := options.Timer
 	timer.RegisterTimerHandler(onTimer)
 	return &Engine{
-		locker:      l,
-		executor:    e,
+		locker:      options.Locker,
+		executor:    options.Executor,
 		eventbus:    eventBus,
 		timer:       timer,
 		options:     options,
@@ -575,6 +604,8 @@ func (e *Stage) WithOption(opts ...Option) *Stage {
 
 	timer := e.options.Timer
 	timer.RegisterTimerHandler(onTimer)
+	e.locker = e.options.Locker
+	e.executor = e.options.Executor
 	e.timer = timer
 	e.logger = e.options.Logger
 	e.idGenerator = e.options.IDGenerator

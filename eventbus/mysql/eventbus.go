@@ -325,7 +325,7 @@ func (e *EventBus) initService() error {
 
 func (e *EventBus) lockService(tx *gorm.DB) (*ServicePO, error) {
 	service := &ServicePO{}
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
 		Where("name = ?", e.serviceName).
 		First(service).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -504,7 +504,7 @@ func (e *EventBus) handleTransactions() error {
 		ctx := e.ctxWithDB(context.TODO(), db)
 
 		trans := make([]*Transaction, 0)
-		if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+		if err := db.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).Where(
 			"service = ? and due_time < ?", e.serviceName, time.Now(),
 		).Find(&trans).Error; err != nil {
 			return err

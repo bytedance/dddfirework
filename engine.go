@@ -288,6 +288,7 @@ type EventHandlerConstruct interface{}
 type Options struct {
 	WithTransaction bool
 	RecursiveDelete bool // 删除根实体是否递归删除所有子实体
+	DryRun          bool // dryrun 模式，不执行持久化，不发送事件
 	Locker          ILock
 	Executor        IExecutor
 	EventPersist    EventPersist // 是否保存领域事件到 DB
@@ -317,6 +318,14 @@ func (t RecursiveDeleteOption) ApplyToOptions(opts *Options) {
 }
 
 const WithRecursiveDelete = RecursiveDeleteOption(true)
+
+type DryRunOption bool
+
+func (t DryRunOption) ApplyToOptions(opts *Options) {
+	opts.DryRun = bool(t)
+}
+
+const WithDryRun = DryRunOption(true)
 
 type LoggerOption struct {
 	logger logr.Logger
@@ -981,6 +990,9 @@ func (e *Stage) makeEventPersistAction(events []*DomainEvent) (*Action, error) {
 }
 
 func (e *Stage) dispatchEvents(ctx context.Context, events []*DomainEvent) (err error) {
+	if e.options.DryRun {
+		return nil
+	}
 	if !e.options.WithTransaction {
 		e.logger.Info("engine not support transaction")
 		return e.eventBus.Dispatch(ctx, events...)
@@ -1109,6 +1121,9 @@ func execHook(ctx context.Context, entity IEntity, ct changeType, isBefore bool)
 }
 
 func (e *Stage) exec(ctx context.Context, actions []*Action) error {
+	if e.options.DryRun {
+		return nil
+	}
 	for _, a := range actions {
 		if err := e.executor.Exec(ctx, a); err != nil {
 			return err

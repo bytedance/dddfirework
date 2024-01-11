@@ -58,9 +58,9 @@ func (o *EventPO) TableName() string {
 	return "ddd_domain_event"
 }
 
+// Transaction
 /*
 CREATE TABLE `ddd_event_transaction` (
-
 	`id` int NOT NULL AUTO_INCREMENT,
 	`service` varchar(30) NOT NULL,
 	`events` text,
@@ -68,7 +68,6 @@ CREATE TABLE `ddd_event_transaction` (
 	`created_at` datetime(3) DEFAULT NULL,
 	PRIMARY KEY (`id`),
 	KEY `idx_ddd_event_transaction_created_at` (`created_at`)
-
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 */
 type Transaction struct {
@@ -96,7 +95,7 @@ type FailedInfo struct {
 
 // ServicePO 服务存储模型
 /*
-	CREATE TABLE `ddd_eventbus_service` (
+CREATE TABLE `ddd_eventbus_service` (
 	`name` varchar(30) NOT NULL,
 	`failed` text,
 	`retry` text,
@@ -106,7 +105,7 @@ type FailedInfo struct {
 	PRIMARY KEY (`name`),
 	KEY `idx_ddd_eventbus_service_created_at` (`created_at`),
 	KEY `idx_ddd_eventbus_service_updated_at` (`updated_at`)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 */
 type ServicePO struct {
 	Name      string       `gorm:"primaryKey"`

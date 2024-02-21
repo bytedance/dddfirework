@@ -21,6 +21,8 @@ import (
 
 	"github.com/bsm/redislock"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/bytedance/dddfirework"
 )
 
 type RedisLock struct {
@@ -33,10 +35,13 @@ func NewRedisLock(cli *redis.Client, ttl time.Duration) *RedisLock {
 }
 
 func (r *RedisLock) Lock(ctx context.Context, key string) (keyLock interface{}, err error) {
-	return r.cli.Obtain(ctx, key, r.ttl, &redislock.Options{
+	if keyLock, err = r.cli.Obtain(ctx, key, r.ttl, &redislock.Options{
 		// 默认固定间隔重试，最大重试30次
 		RetryStrategy: redislock.LimitRetry(redislock.LinearBackoff(100*time.Millisecond), 30)},
-	)
+	); err == redislock.ErrNotObtained {
+		return nil, dddfirework.ErrEntityLocked
+	}
+	return
 }
 
 func (r *RedisLock) UnLock(ctx context.Context, keyLock interface{}) error {

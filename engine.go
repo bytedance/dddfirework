@@ -30,9 +30,12 @@ import (
 	"github.com/bytedance/dddfirework/logger/stdr"
 )
 
-var ErrBreak = fmt.Errorf("break process") // 中断流程，不返回错误
-var ErrEntityNotFound = fmt.Errorf("entity not found")
-var ErrEntityRepeated = fmt.Errorf("entity already added")
+var (
+	ErrBreak          = fmt.Errorf("break process") // 中断流程，不返回错误
+	ErrEntityNotFound = fmt.Errorf("entity not found")
+	ErrEntityRepeated = fmt.Errorf("entity already added")
+	ErrEntityLocked   = fmt.Errorf("entity had been locked")
+)
 
 var defaultLogger = stdr.NewStdr("ddd_engine")
 
@@ -1195,7 +1198,9 @@ func (e *Stage) runOnLock(f doSave, lockKeys ...string) doSave {
 		for _, id := range lockKeys {
 			l, err := e.locker.Lock(ctx, fmt.Sprintf("ddd_engine_%s", id))
 			if err != nil {
-				lockErr = fmt.Errorf("acquiring redis locker failed: %v", err)
+				if lockErr != ErrEntityLocked {
+					lockErr = fmt.Errorf("acquire lock failed: %w", err)
+				}
 				break
 			}
 			ls = append(ls, l)

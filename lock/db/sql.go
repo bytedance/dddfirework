@@ -24,10 +24,8 @@ import (
 	"github.com/avast/retry-go"
 	"github.com/rs/xid"
 	"gorm.io/gorm"
-)
 
-var (
-	ErrConflict = errors.New("LockConflict")
+	"github.com/bytedance/dddfirework"
 )
 
 type DBLock struct {
@@ -44,8 +42,8 @@ func (r *DBLock) Lock(ctx context.Context, key string) (keyLock interface{}, err
 		keyLock, err = r.lock(ctx, key)
 		return err
 	},
-		retry.RetryIf(func(err error) bool { // 只针对 ErrConflict 重试
-			return err == ErrConflict
+		retry.RetryIf(func(err error) bool { // 只针对 dddfirework.ErrEntityLocked 重试
+			return err == dddfirework.ErrEntityLocked
 		}),
 		retry.Delay(100*time.Millisecond), // 重试间隔
 		retry.Attempts(5),                 // 重试次数
@@ -74,7 +72,7 @@ func (r *DBLock) lock(ctx context.Context, key string) (keyLock interface{}, err
 	// locked
 	if time.Since(lock.UpdatedAt) < r.ttl {
 		// key is locked
-		return nil, ErrConflict
+		return nil, dddfirework.ErrEntityLocked
 	}
 	// 有记录但是数据过期
 	res := r.db.WithContext(ctx).Model(&ResourceLock{}).Where("resource = ?", key).
@@ -86,7 +84,7 @@ func (r *DBLock) lock(ctx context.Context, key string) (keyLock interface{}, err
 	}
 	if res.RowsAffected == 0 {
 		// resource updated by others
-		return nil, ErrConflict
+		return nil, dddfirework.ErrEntityLocked
 	}
 	return &lock, nil
 }

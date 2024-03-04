@@ -919,8 +919,8 @@ func (e *Stage) makeActions(changes []*entityChanged) ([]*Action, error) {
 				return nil, err
 			}
 			poType := reflect.TypeOf(po)
+			poTypes = append(poTypes, poType)
 			if _, in := typeActions[op]; !in {
-				poTypes = append(poTypes, poType)
 				typeActions[op] = map[reflect.Type]*Action{}
 			}
 

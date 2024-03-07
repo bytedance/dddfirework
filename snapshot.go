@@ -60,12 +60,12 @@ func (c *entityChanged) Remove(entity IEntity) bool {
 	return true
 }
 
-type simpleSet map[IEntity]bool
+type simpleSet map[IEntity]int
 
 func (s simpleSet) Diff(s2 simpleSet) simpleSet {
 	res := simpleSet{}
 	for e := range s {
-		if !s2[e] {
+		if _, in := s2[e]; !in {
 			res[e] = s[e]
 		}
 	}
@@ -86,7 +86,7 @@ func (s simpleSet) Inter(s2 simpleSet) simpleSet {
 	res := simpleSet{}
 	for e := range s {
 		if _, in := s2[e]; in {
-			res[e] = true
+			res[e] = s[e]
 		}
 	}
 
@@ -100,6 +100,9 @@ func (s simpleSet) ToSlice() []IEntity {
 		res[i] = e
 		i++
 	}
+	sort.SliceStable(res, func(i, j int) bool {
+		return s[res[i]] < s[res[j]]
+	})
 	return res
 }
 
@@ -109,8 +112,8 @@ func (s simpleSet) Empty() bool {
 
 func makeEntitySet(nodes []IEntity) simpleSet {
 	s := simpleSet{}
-	for _, n := range nodes {
-		s[n] = true
+	for i, n := range nodes {
+		s[n] = i
 	}
 	return s
 }

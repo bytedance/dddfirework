@@ -909,6 +909,7 @@ func (e *Stage) putNewID(changes []*entityChanged) error {
 // 相同操作，相同类型的PO，合并到一个 Action
 func (e *Stage) makeActions(changes []*entityChanged) ([]*Action, error) {
 	typeActions := make(map[OpType]map[reflect.Type]*Action, 3)
+	poTypes := []reflect.Type{}
 	for _, item := range changes {
 		for _, entity := range item.children {
 			op := changeType2OP(item.changeType)
@@ -921,6 +922,7 @@ func (e *Stage) makeActions(changes []*entityChanged) ([]*Action, error) {
 				return nil, err
 			}
 			poType := reflect.TypeOf(po)
+			poTypes = append(poTypes, poType)
 			if _, in := typeActions[op]; !in {
 				typeActions[op] = map[reflect.Type]*Action{}
 			}
@@ -940,8 +942,12 @@ func (e *Stage) makeActions(changes []*entityChanged) ([]*Action, error) {
 	}
 	actions := make([]*Action, 0)
 	for _, t := range []OpType{OpInsert, OpUpdate, OpDelete} {
-		for _, a := range typeActions[t] {
-			actions = append(actions, a)
+		for _, at := range poTypes {
+			if _, in := typeActions[t][at]; !in {
+				continue
+			}
+			actions = append(actions, typeActions[t][at])
+			delete(typeActions[t], at)
 		}
 	}
 	return actions, nil

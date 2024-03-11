@@ -649,12 +649,23 @@ func (e *Stage) BuildEntity(ctx context.Context, parent IEntity, children ...int
 
 	for _, item := range children {
 		itemType := reflect.TypeOf(item)
+		itemVal := reflect.ValueOf(item)
 		if itemType.Kind() != reflect.Ptr {
 			return fmt.Errorf("children must be pointer")
 		}
 		if itemType.Elem().Kind() == reflect.Slice {
 			if err := e.buildEntitySliceByParent(ctx, parent, item); err != nil {
 				return err
+			}
+		} else if itemType.Elem().Kind() == reflect.Ptr &&
+			itemType.Elem().Implements(entityType) {
+			if itemVal.Elem().IsNil() && itemVal.Elem().CanSet() {
+				newItem := reflect.New(itemType.Elem().Elem())
+				itemVal.Elem().Set(newItem)
+				itemValDef := newItem.Interface()
+				if err := e.buildEntity(ctx, itemValDef.(IEntity), parent); err != nil && !errors.Is(err, ErrEntityNotFound) {
+					return err
+				}
 			}
 		} else if itemType.Implements(entityType) {
 			if err := e.buildEntity(ctx, item.(IEntity), parent); err != nil && !errors.Is(err, ErrEntityNotFound) {
@@ -670,9 +681,9 @@ func (e *Stage) BuildEntity(ctx context.Context, parent IEntity, children ...int
 // 查询并构建 entity 实体，注意，不会处理 parent 实体
 func (e *Stage) buildEntity(ctx context.Context, entity, parent IEntity) error {
 	// 至少一个有 ID
-	if entity.GetID() == "" && parent.GetID() == "" {
-		return fmt.Errorf("entity to build must has id")
-	}
+	// if entity.GetID() == "" && parent.GetID() == "" {
+	// 	return fmt.Errorf("entity to build must has id")
+	// }
 	po, err := e.executor.Entity2Model(entity, parent, OpQuery)
 	if err != nil {
 		return err

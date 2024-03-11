@@ -16,7 +16,6 @@
 package mysql
 
 import (
-	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -46,8 +45,6 @@ func diffValue(a, b reflect.Value) (fields []string, diff bool) {
 			return
 		}
 	}
-	// log.Printf("a: %v, valid: %v, zero: %v", a.Type().Kind(), a.IsValid(), a.IsZero())
-	// log.Printf("b: %v, valid: %v, zero: %v", b.Type().Kind(), b.IsValid(), b.IsZero())
 	if a.IsZero() && b.IsZero() {
 		diff = false
 		return
@@ -71,8 +68,6 @@ func diffStruct(currVal, prevVal reflect.Value) []string {
 	poType := currVal.Type()
 	for i := 0; i < currVal.NumField(); i++ {
 		field := poType.Field(i)
-		log.Printf("left Field: %s, kind: %s", field.Name, poType.Field(i).Type.Kind())
-		log.Printf("right Field: %s, kind: %s", prevVal.Type().Field(i).Name, prevVal.Type().Field(i).Type.Kind())
 		fieldVal := currVal.Field(i)
 		prevFiledVal := prevVal.Field(i)
 		fieldVal, prevFiledVal = reflect.Indirect(fieldVal), reflect.Indirect(prevFiledVal)
@@ -80,13 +75,11 @@ func diffStruct(currVal, prevVal reflect.Value) []string {
 		fieldTag := field.Tag.Get("gorm")
 		if fieldVal.Kind() == reflect.Struct {
 			if structDiff, diff := diffValue(fieldVal, prevFiledVal); diff {
-				log.Printf("fieldName: %s, diff: %v", fieldName, structDiff)
 				if field.Anonymous || hasValue(fieldTag, "embedded") {
 					result = append(result, structDiff...)
 				} else {
 					result = append(result, fieldName)
 				}
-				log.Printf("result: %v", result)
 			}
 		} else {
 			if _, diff := diffValue(fieldVal, prevFiledVal); diff {

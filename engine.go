@@ -663,8 +663,12 @@ func (e *Stage) BuildEntity(ctx context.Context, parent IEntity, children ...int
 				newItem := reflect.New(itemType.Elem().Elem())
 				itemVal.Elem().Set(newItem)
 				itemValDef := newItem.Interface()
-				if err := e.buildEntity(ctx, itemValDef.(IEntity), parent); err != nil && !errors.Is(err, ErrEntityNotFound) {
-					return err
+				if err := e.buildEntity(ctx, itemValDef.(IEntity), parent); err != nil {
+					if errors.Is(err, ErrEntityNotFound) {
+						itemVal.Elem().SetZero()
+					} else {
+						return err
+					}
 				}
 			}
 		} else if itemType.Implements(entityType) {

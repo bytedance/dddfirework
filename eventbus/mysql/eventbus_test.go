@@ -247,6 +247,68 @@ func TestEventBusRetry(t *testing.T) {
 	}
 }
 
+func TestEventBusRetryStrategy(t *testing.T) {
+	ctx := context.Background()
+	db := testsuit.InitMysql()
+
+	mu := sync.Mutex{}
+	counts := map[string]int{}
+	eventBus := NewEventBus("test_retry_strategy", db, func(opt *Options) {
+		opt.LimitPerRun = 100
+		opt.ConsumeConcurrent = 10
+		opt.RetryStrategy = &CustomRetry{
+			Intervals: []time.Duration{
+				10 * time.Millisecond,
+				10 * time.Millisecond,
+				1 * time.Hour,
+			},
+		}
+		offset := int64(0)
+		opt.DefaultOffset = &offset
+	})
+	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
+		mu.Lock()
+		counts[evt.ID] += 1
+		mu.Unlock()
+
+		if evt.ID == "0" {
+			return fmt.Errorf("retry")
+		}
+		return nil
+	})
+
+	for i := 0; i < 10; i++ {
+		if err := eventBus.Dispatch(ctx, dddfirework.NewDomainEvent(&testEvent{EType: "test_retry_strategy", Data: "retry"})); err != nil {
+			assert.NoError(t, err)
+		}
+		if err := eventBus.handleEvents(); err != nil {
+			assert.NoError(t, err)
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var eventCount int64
+		tx.Model(&EventPO{}).Count(&eventCount)
+		assert.Equal(t, eventCount, int64(len(counts)))
+		for id, count := range counts {
+			if id == "0" {
+				assert.Equal(t, 3, count)
+			} else {
+				assert.Equal(t, 1, count)
+			}
+		}
+
+		service := &ServicePO{}
+		err := tx.Where("name = ?", "test_retry_strategy").First(service).Error
+		assert.NoError(t, err)
+		assert.Len(t, service.Retry, 1)
+		return err
+	})
+
+	assert.NoError(t, err)
+}
+
 func TestEventBusFailed(t *testing.T) {
 	ctx := context.Background()
 	db := testsuit.InitMysql()

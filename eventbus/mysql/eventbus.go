@@ -53,6 +53,7 @@ var ErrNoTransaction = fmt.Errorf("no transaction")
 var ErrServiceNotCreate = fmt.Errorf("service not create")
 
 var defaultLogger = stdr.NewStdr("mysql_eventbus")
+var eventBusMu sync.Mutex
 
 type IRetryStrategy interface {
 	// Next 获取下一次重试的策略，返回 nil 表示不再重试
@@ -361,36 +362,44 @@ func (e *EventBus) getScanEvents(db *gorm.DB, service *ServicePO) ([]*EventPO, e
 	return eventPOs, nil
 }
 
-func (e *EventBus) getRetryEvents(db *gorm.DB, service *ServicePO) ([]*EventPO, error) {
+func (e *EventBus) getRetryEvents(db *gorm.DB, service *ServicePO) ([]*EventPO, []int64, error) {
 	now := time.Now()
 	retryIDs := make([]int64, 0)
+	remainIDs := make([]int64, 0)
 	for _, info := range service.Retry {
 		if info.RetryTime.Before(now) {
 			retryIDs = append(retryIDs, info.ID)
+		} else {
+			remainIDs = append(remainIDs, info.ID)
 		}
 	}
 	if len(retryIDs) == 0 {
-		return nil, nil
+		return nil, remainIDs, nil
 	}
 
 	eventPOs := make([]*EventPO, 0)
 	if err := db.Where("id in ?", retryIDs).Find(&eventPOs).Error; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return eventPOs, nil
+	return eventPOs, remainIDs, nil
 }
 
-func (e *EventBus) doRetryStrategy(service *ServicePO, failedIDs []int64) (retry, failed []*RetryInfo) {
+func (e *EventBus) doRetryStrategy(service *ServicePO, remainIDs, failedIDs []int64) (retry, failed []*RetryInfo) {
+	retryInfos := make(map[int64]*RetryInfo)
+	for _, info := range service.Retry {
+		retryInfos[info.ID] = info
+	}
+
+	for _, id := range remainIDs {
+		retry = append(retry, retryInfos[id])
+	}
+
 	// 没有定义重试策略，默认不重试直接失败
 	if e.retryStrategy == nil {
 		for _, id := range failedIDs {
 			failed = append(failed, &RetryInfo{ID: id})
 		}
 		return
-	}
-	retryInfos := make(map[int64]*RetryInfo)
-	for _, info := range service.Retry {
-		retryInfos[info.ID] = info
 	}
 
 	for _, id := range failedIDs {
@@ -417,7 +426,6 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (fai
 	close(events)
 
 	wg := sync.WaitGroup{}
-	mu := sync.Mutex{}
 	for i := 0; i < e.opt.ConsumeConcurrent; i++ {
 		wg.Add(1)
 		go func() {
@@ -427,14 +435,14 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (fai
 				defer func() {
 					if r := recover(); r != nil {
 						e.logger.Error(fmt.Errorf("err: %v stack:%s", r, string(debug.Stack())), fmt.Sprintf("panic while handling event(%s)", po.EventID))
-						mu.Lock()
-						defer mu.Unlock()
+						eventBusMu.Lock()
+						defer eventBusMu.Unlock()
 						panics = append(panics, po.ID)
 					}
 				}()
 				if err := e.cb(ctx, po.Event); err != nil {
-					mu.Lock()
-					defer mu.Unlock()
+					eventBusMu.Lock()
+					defer eventBusMu.Unlock()
 					failed = append(failed, po.ID)
 				}
 			}
@@ -460,7 +468,7 @@ func (e *EventBus) handleEvents() error {
 		if err != nil {
 			return err
 		}
-		retryEvents, err := e.getRetryEvents(tx, service)
+		retryEvents, remainIDs, err := e.getRetryEvents(tx, service)
 		if err != nil {
 			return err
 		}
@@ -472,7 +480,7 @@ func (e *EventBus) handleEvents() error {
 		}
 
 		failedIDs, panicIDs := e.dispatchEvents(ctx, events)
-		retry, failed := e.doRetryStrategy(service, failedIDs)
+		retry, failed := e.doRetryStrategy(service, remainIDs, failedIDs)
 		service.Retry = retry
 		service.Failed = append(service.Failed, failed...)
 		for _, id := range panicIDs {

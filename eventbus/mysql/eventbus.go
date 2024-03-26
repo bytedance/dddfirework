@@ -409,7 +409,7 @@ func (e *EventBus) doRetryStrategy(service *ServicePO, failedIDs []int64) (retry
 	return
 }
 
-func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (success, failed, panics []int64) {
+func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (failed, panics []int64) {
 	events := make(chan *EventPO, len(eventPOs))
 	for _, e := range eventPOs {
 		events <- e
@@ -417,6 +417,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (suc
 	close(events)
 
 	wg := sync.WaitGroup{}
+	mu := sync.Mutex{}
 	for i := 0; i < e.opt.ConsumeConcurrent; i++ {
 		wg.Add(1)
 		go func() {
@@ -426,13 +427,15 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (suc
 				defer func() {
 					if r := recover(); r != nil {
 						e.logger.Error(fmt.Errorf("err: %v stack:%s", r, string(debug.Stack())), fmt.Sprintf("panic while handling event(%s)", po.EventID))
+						mu.Lock()
+						defer mu.Unlock()
 						panics = append(panics, po.ID)
 					}
 				}()
 				if err := e.cb(ctx, po.Event); err != nil {
+					mu.Lock()
+					defer mu.Unlock()
 					failed = append(failed, po.ID)
-				} else {
-					success = append(success, po.ID)
 				}
 			}
 			for po := range events {
@@ -468,7 +471,7 @@ func (e *EventBus) handleEvents() error {
 			return nil
 		}
 
-		_, failedIDs, panicIDs := e.dispatchEvents(ctx, events)
+		failedIDs, panicIDs := e.dispatchEvents(ctx, events)
 		retry, failed := e.doRetryStrategy(service, failedIDs)
 		service.Retry = retry
 		service.Failed = append(service.Failed, failed...)

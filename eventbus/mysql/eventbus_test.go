@@ -169,6 +169,41 @@ func TestEventBusConcurrent(t *testing.T) {
 	}
 }
 
+func TestEventBusConcurrentFailed(t *testing.T) {
+	ctx := context.Background()
+	db := testsuit.InitMysql()
+
+	eventBus := NewEventBus("test_concurrent_failed", db, func(opt *Options) {
+		opt.RetryStrategy = &LimitRetry{
+			Limit: -1,
+		}
+		opt.LimitPerRun = 200
+		opt.ConsumeConcurrent = 10
+	})
+	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
+		if evt.Type == "test_concurrent_failed" {
+			return fmt.Errorf("failed")
+		}
+		return nil
+	})
+
+	for i := 0; i < 100; i++ {
+		err := eventBus.Dispatch(ctx, dddfirework.NewDomainEvent(&testEvent{EType: "test_concurrent_failed", Data: "failed"}))
+		assert.NoError(t, err)
+	}
+
+	err := eventBus.handleEvents()
+	assert.NoError(t, err)
+
+	service := &ServicePO{}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		return tx.Where("name = ?", "test_concurrent_failed").First(service).Error
+	})
+	assert.NoError(t, err)
+	assert.Len(t, service.Failed, 100)
+
+}
+
 func TestEventBusRetry(t *testing.T) {
 	db := testsuit.InitMysql()
 

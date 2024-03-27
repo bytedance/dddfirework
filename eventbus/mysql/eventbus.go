@@ -370,6 +370,7 @@ func (e *EventBus) getRetryEvents(db *gorm.DB, service *ServicePO) ([]*EventPO, 
 		if info.RetryTime.Before(now) {
 			retryIDs = append(retryIDs, info.ID)
 		} else {
+			// 保留未到重试时间的事件
 			remainIDs = append(remainIDs, info.ID)
 		}
 	}
@@ -441,6 +442,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (fai
 					}
 				}()
 				if err := e.cb(ctx, po.Event); err != nil {
+					// slice 线程不安全，需要加锁
 					eventBusMu.Lock()
 					defer eventBusMu.Unlock()
 					failed = append(failed, po.ID)

@@ -58,6 +58,13 @@ func (o *EventPO) TableName() string {
 	return "ddd_domain_event"
 }
 
+/*
+ddd_event_transaction 作用
+1. 一个command 操作中可能发event，事务event保证了 command 操作+发event 要么都成功要么都失败（也就是command 失败了不发event）
+2. 如果eventbus 不是 ITransactionEventBus 实现或者 发的event.type 不是 SendTypeTransaction ，则不保证上述能力。
+从实现上看，对于事务event，没有记录在event 表中，而是记录在了 ddd_event_transaction.events 里，command发送event 时先记录在这里，command 执行成功，再发送ddd_event_transaction.events
+*/
+
 // Transaction
 /*
 CREATE TABLE `ddd_event_transaction` (

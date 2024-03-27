@@ -158,7 +158,7 @@ func (r *DBLock) update(ctx context.Context, keyLock interface{}) error {
 	return nil
 }
 
-func (r *DBLock) Run(ctx context.Context, key string, fn func(ctx context.Context)) error {
+func (r *DBLock) Run(ctx context.Context, key string, fn func(ctx context.Context) error) error {
 	locker, err := r.Lock(ctx, key)
 	if err != nil {
 		return err
@@ -184,6 +184,6 @@ func (r *DBLock) Run(ctx context.Context, key string, fn func(ctx context.Contex
 		}
 	}()
 
-	fn(subCtx)
-	return nil
+	err = fn(subCtx)
+	return err
 }

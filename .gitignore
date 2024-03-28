@@ -10,3 +10,4 @@ mysql-data
 *.sqlite3
 .vscode
 **/*.DS_Store
+vendor

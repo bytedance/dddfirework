@@ -109,11 +109,11 @@ CREATE TABLE `ddd_eventbus_service` (
 */
 type ServicePO struct {
 	Name      string       `gorm:"primaryKey"`
-	Retry     []*RetryInfo `gorm:"serializer:json"` // 重试信息
-	Failed    []*RetryInfo `gorm:"serializer:json"` // 失败信息
-	Offset    int64        `gorm:"column:offset"`   // 消费位置，等于最后一次消费的事件id
-	CreatedAt time.Time    `gorm:"index"`           // 记录创建时间
-	UpdatedAt time.Time    `gorm:"index"`           // 记录的更新时间
+	Retry     []*RetryInfo `gorm:"serializer:json;type:text"` // 重试信息
+	Failed    []*RetryInfo `gorm:"serializer:json;type:text"` // 失败信息
+	Offset    int64        `gorm:"column:offset"`             // 消费位置，等于最后一次消费的事件id
+	CreatedAt time.Time    `gorm:"index"`                     // 记录创建时间
+	UpdatedAt time.Time    `gorm:"index"`                     // 记录的更新时间
 }
 
 func (o *ServicePO) GetID() string {

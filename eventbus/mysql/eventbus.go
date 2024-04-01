@@ -126,7 +126,7 @@ type Options struct {
 	RetryLimit    int             // 重试次数
 	RetryInterval time.Duration   // 重试间隔
 	CustomRetry   []time.Duration // 自定义重试间隔
-	InfoLimit     int             // 重试/失败信息记录数
+	QueueLimit    int             // 重试/失败队列长度
 
 	DefaultOffset     *int64        // 默认起始 offset
 	RunInterval       time.Duration // 默认轮询间隔
@@ -168,7 +168,7 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 	}
 
 	opt := Options{
-		InfoLimit:         InfoLimit,
+		QueueLimit:        InfoLimit,
 		RunInterval:       runInterval,
 		CleanCron:         cleanCron,
 		RetentionTime:     retentionTime,
@@ -492,17 +492,17 @@ func (e *EventBus) handleEvents() error {
 			service.Failed = append(service.Failed, &RetryInfo{ID: id})
 		}
 
-		// 移动超出限制数量的重试事件到失败事件, FIFO
-		if len(service.Retry) > e.opt.InfoLimit {
-			evictCount := len(service.Retry) - e.opt.InfoLimit
+		// 重试队列超出限制时，移动到失败队列并记录日志, FIFO
+		if len(service.Retry) > e.opt.QueueLimit {
+			evictCount := len(service.Retry) - e.opt.QueueLimit
 			evictEvents := service.Retry[:evictCount]
 			service.Failed = append(service.Failed, evictEvents...)
 			service.Retry = service.Retry[evictCount:]
 			e.logger.V(logger.LevelWarn).Info("evict retry events", "count", evictCount, "events", evictEvents)
 		}
-		// 淘汰超出限制的失败事件, FIFO
-		if len(service.Failed) > e.opt.InfoLimit {
-			evictCount := len(service.Failed) - e.opt.InfoLimit
+		// 失败队列超出限制时，丢弃并记录日志, FIFO
+		if len(service.Failed) > e.opt.QueueLimit {
+			evictCount := len(service.Failed) - e.opt.QueueLimit
 			evictEvents := service.Failed[:evictCount]
 			service.Failed = service.Failed[evictCount:]
 			e.logger.V(logger.LevelWarn).Info("evict failed events", "count", evictCount, "events", evictEvents)

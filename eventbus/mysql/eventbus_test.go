@@ -345,15 +345,15 @@ func TestEventBusInfoLimit(t *testing.T) {
 	ctx := context.Background()
 	db := testsuit.InitMysql()
 
-	infoLimit := 100
-	eventCount := infoLimit + 100
+	queueLimit := 100
+	eventCount := queueLimit + 100
 	eventBus := NewEventBus("test_info_limit", db, func(opt *Options) {
 		opt.RetryStrategy = &LimitRetry{
 			Limit: -1,
 		}
 		opt.LimitPerRun = eventCount * 2
 		opt.ConsumeConcurrent = 10
-		opt.InfoLimit = infoLimit
+		opt.QueueLimit = queueLimit
 	})
 	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
 		if evt.Type == "test_info_limit" {
@@ -375,7 +375,7 @@ func TestEventBusInfoLimit(t *testing.T) {
 		return tx.Where("name = ?", "test_info_limit").First(service).Error
 	})
 	assert.NoError(t, err)
-	assert.Len(t, service.Failed, infoLimit)
+	assert.Len(t, service.Failed, queueLimit)
 
 }
 

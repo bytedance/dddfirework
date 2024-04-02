@@ -37,6 +37,7 @@ import (
 const retryInterval = time.Second * 3
 const retryLimit = 5
 const runInterval = time.Millisecond * 100
+const defaultQueueLimit = 1000
 
 // 每天凌晨两点执行clean
 const cleanCron = "0 2 * * *"
@@ -125,6 +126,7 @@ type Options struct {
 	RetryLimit    int             // 重试次数
 	RetryInterval time.Duration   // 重试间隔
 	CustomRetry   []time.Duration // 自定义重试间隔
+	QueueLimit    int             // 重试/失败队列长度
 
 	DefaultOffset     *int64        // 默认起始 offset
 	RunInterval       time.Duration // 默认轮询间隔
@@ -166,6 +168,7 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 	}
 
 	opt := Options{
+		QueueLimit:        defaultQueueLimit,
 		RunInterval:       runInterval,
 		CleanCron:         cleanCron,
 		RetentionTime:     retentionTime,
@@ -483,11 +486,11 @@ func (e *EventBus) handleEvents() error {
 
 		failedIDs, panicIDs := e.dispatchEvents(ctx, events)
 		retry, failed := e.doRetryStrategy(service, remainIDs, failedIDs)
-		service.Retry = retry
-		service.Failed = append(service.Failed, failed...)
+		failed = append(service.Failed, failed...)
 		for _, id := range panicIDs {
-			service.Failed = append(service.Failed, &RetryInfo{ID: id})
+			failed = append(failed, &RetryInfo{ID: id})
 		}
+		service.Retry, service.Failed = e.evictEvents(retry, failed)
 
 		if len(scanEvents) > 0 {
 			last := scanEvents[len(scanEvents)-1]
@@ -495,6 +498,31 @@ func (e *EventBus) handleEvents() error {
 		}
 		return tx.Save(service).Error
 	})
+}
+
+func (e *EventBus) evictEvents(retry, failed []*RetryInfo) (evictedRetry, evictedFailed []*RetryInfo) {
+	// 重试队列超出限制时，移动到失败队列并记录日志, FIFO
+	if len(retry) > e.opt.QueueLimit {
+		evictCount := len(retry) - e.opt.QueueLimit
+		evictEvents := retry[:evictCount]
+		failed = append(failed, evictEvents...)
+		evictedRetry = retry[evictCount:]
+		e.logger.V(logger.LevelWarn).Info("evict retry events", "count", evictCount, "events", evictEvents)
+	} else {
+		evictedRetry = retry
+	}
+
+	// 失败队列超出限制时，丢弃并记录日志, FIFO
+	if len(failed) > e.opt.QueueLimit {
+		evictCount := len(failed) - e.opt.QueueLimit
+		evictEvents := failed[:evictCount]
+		evictedFailed = failed[evictCount:]
+		e.logger.V(logger.LevelWarn).Info("evict failed events", "count", evictCount, "events", evictEvents)
+	} else {
+		evictedFailed = failed
+	}
+
+	return
 }
 
 func (e *EventBus) checkTX(ctx context.Context, tx *Transaction) {

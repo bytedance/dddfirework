@@ -486,27 +486,11 @@ func (e *EventBus) handleEvents() error {
 
 		failedIDs, panicIDs := e.dispatchEvents(ctx, events)
 		retry, failed := e.doRetryStrategy(service, remainIDs, failedIDs)
-		service.Retry = retry
-		service.Failed = append(service.Failed, failed...)
+		failed = append(service.Failed, failed...)
 		for _, id := range panicIDs {
-			service.Failed = append(service.Failed, &RetryInfo{ID: id})
+			failed = append(failed, &RetryInfo{ID: id})
 		}
-
-		// 重试队列超出限制时，移动到失败队列并记录日志, FIFO
-		if len(service.Retry) > e.opt.QueueLimit {
-			evictCount := len(service.Retry) - e.opt.QueueLimit
-			evictEvents := service.Retry[:evictCount]
-			service.Failed = append(service.Failed, evictEvents...)
-			service.Retry = service.Retry[evictCount:]
-			e.logger.V(logger.LevelWarn).Info("evict retry events", "count", evictCount, "events", evictEvents)
-		}
-		// 失败队列超出限制时，丢弃并记录日志, FIFO
-		if len(service.Failed) > e.opt.QueueLimit {
-			evictCount := len(service.Failed) - e.opt.QueueLimit
-			evictEvents := service.Failed[:evictCount]
-			service.Failed = service.Failed[evictCount:]
-			e.logger.V(logger.LevelWarn).Info("evict failed events", "count", evictCount, "events", evictEvents)
-		}
+		service.Retry, service.Failed = e.evictEvents(retry, failed)
 
 		if len(scanEvents) > 0 {
 			last := scanEvents[len(scanEvents)-1]
@@ -514,6 +498,31 @@ func (e *EventBus) handleEvents() error {
 		}
 		return tx.Save(service).Error
 	})
+}
+
+func (e *EventBus) evictEvents(retry, failed []*RetryInfo) (evictedRetry, evictedFailed []*RetryInfo) {
+	// 重试队列超出限制时，移动到失败队列并记录日志, FIFO
+	if len(retry) > e.opt.QueueLimit {
+		evictCount := len(retry) - e.opt.QueueLimit
+		evictEvents := retry[:evictCount]
+		failed = append(failed, evictEvents...)
+		evictedRetry = retry[evictCount:]
+		e.logger.V(logger.LevelWarn).Info("evict retry events", "count", evictCount, "events", evictEvents)
+	} else {
+		evictedRetry = retry
+	}
+
+	// 失败队列超出限制时，丢弃并记录日志, FIFO
+	if len(failed) > e.opt.QueueLimit {
+		evictCount := len(failed) - e.opt.QueueLimit
+		evictEvents := failed[:evictCount]
+		evictedFailed = failed[evictCount:]
+		e.logger.V(logger.LevelWarn).Info("evict failed events", "count", evictCount, "events", evictEvents)
+	} else {
+		evictedFailed = failed
+	}
+
+	return
 }
 
 func (e *EventBus) checkTX(ctx context.Context, tx *Transaction) {

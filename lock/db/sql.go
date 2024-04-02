@@ -65,6 +65,9 @@ func (r *DBLock) lock(ctx context.Context, key string) (keyLock interface{}, err
 		l := &ResourceLock{Resource: key, LockerID: lockerID}
 		err = r.db.WithContext(ctx).Create(l).Error
 		if err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return nil, dddfirework.ErrEntityLocked
+			}
 			return nil, fmt.Errorf("failed to create resource %s lock, err: %w", key, err)
 		}
 		return l, nil

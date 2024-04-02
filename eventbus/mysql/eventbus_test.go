@@ -341,13 +341,13 @@ func TestEventBusFailed(t *testing.T) {
 	assert.Len(t, service.Failed, 10)
 }
 
-func TestEventBusInfoLimit(t *testing.T) {
+func TestEventBusQueueLimit(t *testing.T) {
 	ctx := context.Background()
 	db := testsuit.InitMysql()
 
 	queueLimit := 100
 	eventCount := queueLimit + 100
-	eventBus := NewEventBus("test_info_limit", db, func(opt *Options) {
+	eventBus := NewEventBus("test_queue_limit", db, func(opt *Options) {
 		opt.RetryStrategy = &LimitRetry{
 			Limit: -1,
 		}
@@ -356,14 +356,14 @@ func TestEventBusInfoLimit(t *testing.T) {
 		opt.QueueLimit = queueLimit
 	})
 	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
-		if evt.Type == "test_info_limit" {
+		if evt.Type == "test_queue_limit" {
 			return fmt.Errorf("failed")
 		}
 		return nil
 	})
 
 	for i := 0; i < eventCount; i++ {
-		err := eventBus.Dispatch(ctx, dddfirework.NewDomainEvent(&testEvent{EType: "test_info_limit", Data: "failed"}))
+		err := eventBus.Dispatch(ctx, dddfirework.NewDomainEvent(&testEvent{EType: "test_queue_limit", Data: "failed"}))
 		assert.NoError(t, err)
 	}
 
@@ -372,7 +372,7 @@ func TestEventBusInfoLimit(t *testing.T) {
 
 	service := &ServicePO{}
 	err = db.Transaction(func(tx *gorm.DB) error {
-		return tx.Where("name = ?", "test_info_limit").First(service).Error
+		return tx.Where("name = ?", "test_queue_limit").First(service).Error
 	})
 	assert.NoError(t, err)
 	assert.Len(t, service.Failed, queueLimit)

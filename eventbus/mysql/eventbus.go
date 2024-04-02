@@ -37,7 +37,7 @@ import (
 const retryInterval = time.Second * 3
 const retryLimit = 5
 const runInterval = time.Millisecond * 100
-const InfoLimit = 1000
+const defaultQueueLimit = 1000
 
 // 每天凌晨两点执行clean
 const cleanCron = "0 2 * * *"
@@ -168,7 +168,7 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 	}
 
 	opt := Options{
-		QueueLimit:        InfoLimit,
+		QueueLimit:        defaultQueueLimit,
 		RunInterval:       runInterval,
 		CleanCron:         cleanCron,
 		RetentionTime:     retentionTime,

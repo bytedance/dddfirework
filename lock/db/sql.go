@@ -38,15 +38,18 @@ func NewDBLock(db *gorm.DB, ttl time.Duration) *DBLock {
 }
 
 func (r *DBLock) Lock(ctx context.Context, key string) (keyLock interface{}, err error) {
-	err = retry.Do(func() error {
-		keyLock, err = r.lock(ctx, key)
-		return err
-	},
+	err = retry.Do(
+		func() error {
+			keyLock, err = r.lock(ctx, key)
+			return err
+		},
 		retry.RetryIf(func(err error) bool { // 只针对 dddfirework.ErrEntityLocked 重试
 			return err == dddfirework.ErrEntityLocked
 		}),
+		retry.DelayType(retry.FixedDelay),
 		retry.Delay(100*time.Millisecond), // 重试间隔
 		retry.Attempts(5),                 // 重试次数
+		retry.LastErrorOnly(true),
 	)
 	return
 }
@@ -79,7 +82,7 @@ func (r *DBLock) lock(ctx context.Context, key string) (keyLock interface{}, err
 	}
 	// 有记录但是数据过期
 	res := r.db.WithContext(ctx).Model(&ResourceLock{}).Where("resource = ?", key).
-		Where("updated_at = ?", lock.UpdatedAt).
+		Where("locker_id = ?", lock.LockerID).
 		UpdateColumns(ResourceLock{UpdatedAt: time.Now(), LockerID: lockerID})
 
 	if res.Error != nil {
@@ -89,14 +92,18 @@ func (r *DBLock) lock(ctx context.Context, key string) (keyLock interface{}, err
 		// resource updated by others
 		return nil, dddfirework.ErrEntityLocked
 	}
+	lock.LockerID = lockerID
 	return &lock, nil
 }
 
 func (r *DBLock) UnLock(ctx context.Context, keyLock interface{}) error {
 	l := keyLock.(*ResourceLock)
-	err := r.db.WithContext(ctx).Where("locker_id = ? and resource = ?", l.LockerID, l.Resource).Delete(&ResourceLock{}).Error
-	if err != nil {
-		return err
+	res := r.db.WithContext(ctx).Where("locker_id = ? and resource = ?", l.LockerID, l.Resource).Delete(&ResourceLock{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected <= 0 { // should not go into this
+		return fmt.Errorf("lock record not found (id=%s resource=%s)", l.LockerID, l.Resource)
 	}
 	return nil
 }

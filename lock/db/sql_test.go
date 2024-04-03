@@ -35,10 +35,13 @@ func TestLock(t *testing.T) {
 	assert.NoError(t, err)
 	r := l.(*ResourceLock)
 	assert.True(t, len(r.LockerID) > 0)
+
 	// 测试lock 过期场景
 	time.Sleep(1 * time.Second)
+	previousID := r.LockerID
 	l, err = lock.Lock(context.Background(), "abc")
 	assert.NoError(t, err)
+	assert.NotEqual(t, previousID, l.(*ResourceLock).LockerID)
 	err = lock.UnLock(context.Background(), l)
 	assert.NoError(t, err)
 }

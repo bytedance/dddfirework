@@ -19,11 +19,11 @@ import (
 	ddd "github.com/bytedance/dddfirework"
 	"github.com/bytedance/dddfirework/example/biz/sale/domain"
 	"github.com/bytedance/dddfirework/example/biz/sale/infrastructure/po"
-	"github.com/bytedance/dddfirework/executor/mysql"
+	"github.com/bytedance/dddfirework/executor/sql"
 )
 
 func Init() {
-	mysql.RegisterEntity2Model(&domain.Order{}, func(entity, parent ddd.IEntity, op ddd.OpType) (mysql.IModel, error) {
+	sql.RegisterEntity2Model(&domain.Order{}, func(entity, parent ddd.IEntity, op ddd.OpType) (sql.IModel, error) {
 		do := entity.(*domain.Order)
 		m := &po.OrderPO{
 			ID:          do.GetID(),
@@ -39,7 +39,7 @@ func Init() {
 			}
 		}
 		return m, nil
-	}, func(m mysql.IModel, do ddd.IEntity) error {
+	}, func(m sql.IModel, do ddd.IEntity) error {
 		orderPO, order := m.(*po.OrderPO), do.(*domain.Order)
 		order.UserID = orderPO.User
 		order.TotalAmount = orderPO.TotalAmount
@@ -47,7 +47,7 @@ func Init() {
 		return nil
 	})
 
-	mysql.RegisterEntity2Model(&domain.SaleItem{}, func(entity, parent ddd.IEntity, op ddd.OpType) (mysql.IModel, error) {
+	sql.RegisterEntity2Model(&domain.SaleItem{}, func(entity, parent ddd.IEntity, op ddd.OpType) (sql.IModel, error) {
 		do := entity.(*domain.SaleItem)
 
 		po := &po.SaleItemPO{
@@ -61,7 +61,7 @@ func Init() {
 			po.OrderID = order.GetID()
 		}
 		return po, nil
-	}, func(m mysql.IModel, do ddd.IEntity) error {
+	}, func(m sql.IModel, do ddd.IEntity) error {
 		fr, to := m.(*po.SaleItemPO), do.(*domain.SaleItem)
 		to.SetID(fr.GetID())
 		to.Name = fr.Name
@@ -71,7 +71,7 @@ func Init() {
 		return nil
 	})
 
-	mysql.RegisterEntity2Model(&domain.Coupon{}, func(entity, parent ddd.IEntity, op ddd.OpType) (mysql.IModel, error) {
+	sql.RegisterEntity2Model(&domain.Coupon{}, func(entity, parent ddd.IEntity, op ddd.OpType) (sql.IModel, error) {
 		do := entity.(*domain.Coupon)
 
 		po := &po.CouponPO{
@@ -84,7 +84,7 @@ func Init() {
 			po.OrderID = order.GetID()
 		}
 		return po, nil
-	}, func(m mysql.IModel, do ddd.IEntity) error {
+	}, func(m sql.IModel, do ddd.IEntity) error {
 		fr, to := m.(*po.CouponPO), do.(*domain.Coupon)
 		to.SetID(fr.GetID())
 		to.CouponID = fr.CouponID

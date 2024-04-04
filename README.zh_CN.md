@@ -35,7 +35,7 @@ dddfirework 是一个支持 DDD （领域驱动设计）实现的引擎框架，
 
 
         import ddd "github.com/bytedance/dddfirework"
-        import "github.com/bytedance/dddfirework/executor/mysql"
+        import "github.com/bytedance/dddfirework/executor/sql"
         
         func init() {
             mysql.RegisterEntity2Model(&domain.Order{}, func(entity, parent ddd.IEntity, op ddd.OpType) (mysql.IModel, error) {
@@ -106,7 +106,7 @@ dddfirework 是一个支持 DDD （领域驱动设计）实现的引擎框架，
         
         import (
             ddd "github.com/bytedance/dddfirework" 
-            db_executor "github.com/bytedance/dddfirework/executor/mysql"
+            db_executor "github.com/bytedance/dddfirework/executor/sql"
             db_eventbus "github.com/bytedance/dddfirework/eventbus/mysql"
             db_lock "github.com/bytedance/dddfirework/lock/db"
             "gorm.io/driver/mysql"

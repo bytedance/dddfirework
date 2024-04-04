@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/bytedance/dddfirework"
-	exec_mysql "github.com/bytedance/dddfirework/executor/mysql"
+	exec_mysql "github.com/bytedance/dddfirework/executor/sql"
 	"github.com/bytedance/dddfirework/testsuit"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/gorm"

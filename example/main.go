@@ -29,7 +29,7 @@ import (
 	"github.com/bytedance/dddfirework/example/event_handler"
 	"github.com/bytedance/dddfirework/example/handler"
 	"github.com/bytedance/dddfirework/example/handler/util"
-	db_executor "github.com/bytedance/dddfirework/executor/mysql"
+	db_executor "github.com/bytedance/dddfirework/executor/sql"
 	db_lock "github.com/bytedance/dddfirework/lock/db"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"

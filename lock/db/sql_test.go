@@ -17,6 +17,8 @@ package db
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,4 +61,28 @@ func TestUnLock(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = lock.Lock(context.Background(), "abc")
 	assert.NoError(t, err)
+}
+
+func TestRun(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	assert.NoError(t, err)
+	err = db.AutoMigrate(&ResourceLock{})
+	assert.NoError(t, err)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	lock := NewDBLock(db.Debug(), 5*time.Second, func(opt *Options) {
+		opt.Retry = false
+	})
+	go func() {
+		err = lock.Run(context.Background(), "abc", func(ctx context.Context) {
+			defer wg.Done()
+			time.Sleep(10 * time.Second)
+		})
+	}()
+	time.Sleep(2 * time.Second)
+	// 会加锁失败
+	_, err = lock.Lock(context.Background(), "abc")
+	fmt.Println(err)
+	assert.Error(t, err)
+	wg.Wait()
 }

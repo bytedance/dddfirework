@@ -22,22 +22,57 @@ import (
 	"time"
 
 	"github.com/avast/retry-go"
+	"github.com/go-logr/logr"
 	"github.com/rs/xid"
 	"gorm.io/gorm"
 
 	"github.com/bytedance/dddfirework"
+	"github.com/bytedance/dddfirework/logger/stdr"
 )
 
-type DBLock struct {
-	ttl time.Duration
-	db  *gorm.DB
+var defaultLogger = stdr.NewStdr("resource_lock")
+
+const (
+	// 定时协程每隔renewInterval 去续期，renewInterval必须小于ttl，以确保在本次ttl到期前，续期定时协程能及时续上。
+	renewInterval = 1 * time.Second
+)
+
+type Options struct {
+	RenewInterval time.Duration
+	Retry         bool
+	Logger        logr.Logger
 }
 
-func NewDBLock(db *gorm.DB, ttl time.Duration) *DBLock {
-	return &DBLock{db: db, ttl: ttl}
+type Option func(opt *Options)
+
+type DBLock struct {
+	ttl    time.Duration
+	db     *gorm.DB
+	logger logr.Logger
+	opt    Options
+}
+
+func NewDBLock(db *gorm.DB, ttl time.Duration, options ...Option) *DBLock {
+	opt := Options{
+		RenewInterval: renewInterval,
+		Retry:         true,
+		Logger:        defaultLogger,
+	}
+	for _, o := range options {
+		o(&opt)
+	}
+	if ttl < opt.RenewInterval {
+		panic(fmt.Sprintf("ttl can not less than %f seconds", opt.RenewInterval.Seconds()))
+	}
+	return &DBLock{db: db, ttl: ttl, logger: opt.Logger, opt: opt}
 }
 
 func (r *DBLock) Lock(ctx context.Context, key string) (keyLock interface{}, err error) {
+	if !r.opt.Retry {
+		keyLock, err = r.lock(ctx, key)
+		return
+	}
+	// 加锁失败后重试
 	err = retry.Do(
 		func() error {
 			keyLock, err = r.lock(ctx, key)
@@ -105,5 +140,50 @@ func (r *DBLock) UnLock(ctx context.Context, keyLock interface{}) error {
 	if res.RowsAffected <= 0 { // should not go into this
 		return fmt.Errorf("lock record not found (id=%s resource=%s)", l.LockerID, l.Resource)
 	}
+	return nil
+}
+
+func (r *DBLock) update(ctx context.Context, keyLock interface{}) error {
+	l := keyLock.(*ResourceLock)
+	res := r.db.WithContext(ctx).
+		Model(&ResourceLock{}).
+		Where("`resource` = ? AND `locker_id` = ?", l.Resource, l.LockerID). // check if locker_id has been changed by others
+		UpdateColumns(ResourceLock{UpdatedAt: time.Now(), LockerID: l.LockerID})
+	if res.Error != nil {
+		return fmt.Errorf("failed to update resource %s lock: %w", l.Resource, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("resource %s updated by others", l.Resource)
+	}
+	return nil
+}
+
+func (r *DBLock) Run(ctx context.Context, key string, fn func(ctx context.Context)) error {
+	locker, err := r.Lock(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = r.UnLock(ctx, locker); err != nil {
+			r.logger.Error(err, fmt.Sprintf("failed to unlock %s", key))
+		}
+	}() // pass parent ctx in here, or defer will use sub ctx below
+
+	ticker := time.NewTicker(r.opt.RenewInterval)
+	// 业务函数执行完成后，会停止renew 协程
+	defer ticker.Stop()
+	subCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		for range ticker.C {
+			if err = r.update(ctx, locker); err != nil {
+				// 续期失败，会通知业务函数停止执行
+				cancel()
+				r.logger.Info(fmt.Sprintf("failed to renew lock %s, error: %v", key, err))
+				break
+			}
+		}
+	}()
+
+	fn(subCtx)
 	return nil
 }

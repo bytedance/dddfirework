@@ -120,14 +120,22 @@ func (t *DBTimer) handleJobs(ctx context.Context) error {
 		}
 
 		for _, job := range jobs {
-			if err := t.cb(ctx, job.Key, job.Cron, job.Payload); err != nil {
-				t.logger.Error(err, "timer callback failed")
-			}
-			if err := job.Next(); err != nil {
-				job.Close(err)
-			}
+			// 拆分job到独立的事务，避免长事务锁定大量资源。事务传播行为：REQUIRES_NEW
+			if err := t.db.Transaction(func(jobTx *gorm.DB) error {
+				if err := t.cb(ctx, job.Key, job.Cron, job.Payload); err != nil {
+					t.logger.Error(err, "timer callback failed")
+				}
+				if err := job.Next(); err != nil {
+					job.Close(err)
+				}
 
-			if err := tx.Save(job).Error; err != nil {
+				// 保存job，避免重复执行
+				if err := jobTx.Save(job).Error; err != nil {
+					return err
+				}
+
+				return nil
+			}); err != nil {
 				return err
 			}
 		}

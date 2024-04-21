@@ -32,7 +32,7 @@ func TestLock(t *testing.T) {
 	assert.NoError(t, err)
 	err = db.AutoMigrate(&ResourceLock{})
 	assert.NoError(t, err)
-	lock := NewDBLock(db.Debug(), 500*time.Millisecond)
+	lock := NewDBLock(db.Debug(), 1*time.Second)
 	l, err := lock.Lock(context.Background(), "abc")
 	assert.NoError(t, err)
 	r := l.(*ResourceLock)

@@ -125,13 +125,13 @@ func (t *DBTimer) handleJobs(ctx context.Context) error {
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).Where(
 				"service = ? and next_time <= ? and status = ? and id = ?", t.service, time.Now(), TimerToRun, job.ID,
 			).First(&job).Error; err != nil {
-				t.logger.V(logger.LevelDebug).Info("lock job failed", "jobID", job.ID, "err", err)
+				t.logger.V(logger.LevelDebug).Info("lock timer job failed", "jobID", job.ID, "err", err)
 				// continue
 				return nil
 			}
 
 			if err := t.cb(ctx, job.Key, job.Cron, job.Payload); err != nil {
-				t.logger.Error(err, "timer callback failed")
+				t.logger.Error(err, "timer job callback failed", "jobID", job.ID)
 			}
 			if err := job.Next(); err != nil {
 				job.Close(err)
@@ -144,7 +144,9 @@ func (t *DBTimer) handleJobs(ctx context.Context) error {
 
 			return nil
 		}); err != nil {
-			return err
+			// 只可能在保存Job和提交事务时发生
+			t.logger.Error(err, "save timer job failed", "jobID", job.ID)
+			continue
 		}
 	}
 

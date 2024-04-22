@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ddd "github.com/bytedance/dddfirework"
+	"github.com/bytedance/dddfirework/logger"
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"gorm.io/gorm"
@@ -107,33 +108,48 @@ func (t *DBTimer) RegisterTimerHandler(cb ddd.TimerHandler) {
 }
 
 func (t *DBTimer) handleJobs(ctx context.Context) error {
-	return t.db.Transaction(func(tx *gorm.DB) error {
-		jobs := make([]*TimerJob, 0)
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-			"service = ? and next_time <= ? and status = ?", t.service, time.Now(), TimerToRun,
-		).Find(&jobs).Error; err != nil {
-			return err
-		}
+	jobs := make([]*TimerJob, 0)
+	if err := t.db.Where(
+		"service = ? and next_time <= ? and status = ?", t.service, time.Now(), TimerToRun,
+	).Find(&jobs).Error; err != nil {
+		return err
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
 
-		if len(jobs) == 0 {
-			return nil
-		}
+	for _, job := range jobs {
+		// 拆分job到独立的事务，避免长事务锁定大量资源
+		if err := t.db.Transaction(func(tx *gorm.DB) error {
+			// lock job
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).Where(
+				"service = ? and next_time <= ? and status = ? and id = ?", t.service, time.Now(), TimerToRun, job.ID,
+			).First(&job).Error; err != nil {
+				t.logger.V(logger.LevelDebug).Info("lock timer job failed", "jobID", job.ID, "err", err)
+				// continue
+				return nil
+			}
 
-		for _, job := range jobs {
 			if err := t.cb(ctx, job.Key, job.Cron, job.Payload); err != nil {
-				t.logger.Error(err, "timer callback failed")
+				t.logger.Error(err, "timer job callback failed", "jobID", job.ID)
 			}
 			if err := job.Next(); err != nil {
 				job.Close(err)
 			}
 
+			// 保存job，避免重复执行
 			if err := tx.Save(job).Error; err != nil {
 				return err
 			}
-		}
-		return nil
-	})
 
+			return nil
+		}); err != nil {
+			// 只可能在保存Job和提交事务时发生，continue
+			t.logger.Error(err, "save timer job failed", "jobID", job.ID)
+		}
+	}
+
+	return nil
 }
 
 func (t *DBTimer) Start(ctx context.Context) {

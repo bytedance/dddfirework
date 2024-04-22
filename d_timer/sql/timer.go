@@ -144,9 +144,8 @@ func (t *DBTimer) handleJobs(ctx context.Context) error {
 
 			return nil
 		}); err != nil {
-			// 只可能在保存Job和提交事务时发生
+			// 只可能在保存Job和提交事务时发生，continue
 			t.logger.Error(err, "save timer job failed", "jobID", job.ID)
-			continue
 		}
 	}
 

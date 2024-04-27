@@ -42,6 +42,7 @@ type testDiffPO struct {
 	DiffPtrValue    *int
 	SamePtrValue    *int
 	SliceValue      []string
+	SliceStruct     []*NestStruct
 	JSONValue       datatypes.JSON
 	SameJSONValue   datatypes.JSON
 	StructValue     *NestStruct `gorm:"type:json,serialize:json"`
@@ -61,6 +62,9 @@ func TestDiffModel(t *testing.T) {
 		},
 		NestStruct: NestStruct{
 			NestNum: 100,
+		},
+		SliceStruct: []*NestStruct{
+			{NestName: "test"},
 		},
 		ID:            "p1",
 		Name:          "n2",
@@ -88,12 +92,15 @@ func TestDiffModel(t *testing.T) {
 		TestDiffBasePO: TestDiffBasePO{
 			UpdatedAt: now,
 		},
-		ID:            "p2",
-		Name:          "n2",
-		ItemPrice:     50,
-		DiffPtrValue:  &j,
-		SamePtrValue:  &i,
-		SliceValue:    []string{"kkk"},
+		ID:           "p2",
+		Name:         "n2",
+		ItemPrice:    50,
+		DiffPtrValue: &j,
+		SamePtrValue: &i,
+		SliceValue:   []string{"kkk"},
+		SliceStruct: []*NestStruct{
+			{NestName: "test2"},
+		},
 		JSONValue:     datatypes.JSON([]byte(`{"a":2}`)),
 		SameJSONValue: datatypes.JSON([]byte(`{"a":1}`)),
 		StructValue: &NestStruct{
@@ -111,5 +118,5 @@ func TestDiffModel(t *testing.T) {
 	}
 
 	result := DiffModel(p1, p2)
-	assert.ElementsMatch(t, result, []string{"ID", "ItemPrice", "DiffPtrValue", "CreatedAt", "SliceValue", "JSONValue", "StructValue", "UpdatedAt", "EmptyStruct1", "EmptyStruct2", "NestNum"})
+	assert.ElementsMatch(t, result, []string{"ID", "ItemPrice", "DiffPtrValue", "CreatedAt", "SliceValue", "JSONValue", "StructValue", "UpdatedAt", "EmptyStruct1", "EmptyStruct2", "NestNum", "SliceStruct"})
 }

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -704,4 +705,14 @@ func TestCleanConcurrent(t *testing.T) {
 	err = db.Model(&EventPO{}).Where("id < ?", slowestServicePO.Offset).Count(&count).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 0, int(count))
+}
+
+func TestSortEvent(t *testing.T) {
+	now := time.Now()
+	e1 := &EventPO{Event: &dddfirework.DomainEvent{Sender: "1"}, EventCreatedAt: now}
+	e2 := &EventPO{Event: &dddfirework.DomainEvent{Sender: "2"}, EventCreatedAt: now.Add(1 * time.Second)}
+	events := []*EventPO{e2, e1}
+	assert.Equal(t, events[0].Event.Sender, "2")
+	sort.Sort(ByEventCreatedAt(events))
+	assert.Equal(t, events[0].Event.Sender, "1")
 }

@@ -131,3 +131,15 @@ func eventPersist(event *dddfirework.DomainEvent) (*EventPO, error) {
 		EventCreatedAt: event.CreatedAt,
 	}, nil
 }
+
+// ByEventCreatedAt Event 切片的类型，用于实现 sort.Interface
+type ByEventCreatedAt []*EventPO
+
+// Len 实现 sort.Interface 的 Len 方法
+func (a ByEventCreatedAt) Len() int { return len(a) }
+
+// Less 实现 sort.Interface 的 Less 方法，按EventCreatedAt升序排序
+func (a ByEventCreatedAt) Less(i, j int) bool { return a[i].EventCreatedAt.Before(a[j].EventCreatedAt) }
+
+// Swap 实现 sort.Interface 的 Swap 方法
+func (a ByEventCreatedAt) Swap(i, j int) { a[i], a[j] = a[j], a[i] }

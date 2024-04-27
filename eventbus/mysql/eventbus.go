@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -423,11 +424,32 @@ func (e *EventBus) doRetryStrategy(service *ServicePO, remainIDs, failedIDs []in
 }
 
 func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (failed, panics []int64) {
-	events := make(chan *EventPO, len(eventPOs))
+	// fifoEvents按sender分组
+	fifoEvents := map[string][]*EventPO{}
+	normalEvents := make([]*EventPO, 0)
 	for _, e := range eventPOs {
-		events <- e
+		if e.Event.SendType == dddfirework.SendTypeFIFO {
+			_events := fifoEvents[e.Event.GetSender()]
+			if len(_events) == 0 {
+				_events = make([]*EventPO, 0)
+			}
+			fifoEvents[e.Event.GetSender()] = append(_events, e)
+		} else {
+			normalEvents = append(normalEvents, e)
+		}
 	}
-	close(events)
+	fifoEventChannel := make(chan []*EventPO, len(fifoEvents))
+	for _, _events := range fifoEvents {
+		// 按EventCreatedAt 排序
+		sort.Sort(ByEventCreatedAt(_events))
+		fifoEventChannel <- _events
+	}
+	close(fifoEventChannel)
+	normalEventChannel := make(chan *EventPO, len(normalEvents))
+	for _, _event := range normalEvents {
+		normalEventChannel <- _event
+	}
+	close(normalEventChannel)
 
 	wg := sync.WaitGroup{}
 	for i := 0; i < e.opt.ConsumeConcurrent; i++ {
@@ -451,7 +473,13 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) (fai
 					failed = append(failed, po.ID)
 				}
 			}
-			for po := range events {
+			for _events := range fifoEventChannel {
+				e.logger.Info("handle events", "sender", _events[0].Event.GetSender())
+				for _, po := range _events {
+					cb(ctx, po)
+				}
+			}
+			for po := range normalEventChannel {
 				cb(ctx, po)
 			}
 		}()

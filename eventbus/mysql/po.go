@@ -29,6 +29,18 @@ const (
 	EventStatusFailed EventStatus = 3
 )
 
+type ServiceEventStatus int8
+
+const (
+	ServiceEventStatusInit    ServiceEventStatus = 0
+	ServiceEventStatusSuccess ServiceEventStatus = 10
+	ServiceEventStatusFailed  ServiceEventStatus = 21
+	// ServiceEventStatusPrecedingFailed 前置event失败
+	ServiceEventStatusPrecedingFailed ServiceEventStatus = 22
+	// ServiceEventStatusExpired 过期，在保序事件中，一个event处理失败，会阻塞后序同名sender_id的处理，但不能永远阻塞，可以通过人工改db或其他策略将已经失败的几个event置为过期，不影响新的同名sender_id event的执行
+	ServiceEventStatusExpired ServiceEventStatus = 31
+)
+
 // EventPO 事件存储模型
 /*
 CREATE TABLE `ddd_domain_event` (
@@ -97,9 +109,6 @@ type FailedInfo struct {
 /*
 CREATE TABLE `ddd_eventbus_service` (
 	`name` varchar(30) NOT NULL,
-	`failed` text,
-	`retry` text,
-	`offset` bigint(20) DEFAULT NULL,
 	`created_at` datetime(3) DEFAULT NULL,
 	`updated_at` datetime(3) DEFAULT NULL,
 	PRIMARY KEY (`name`),
@@ -108,12 +117,9 @@ CREATE TABLE `ddd_eventbus_service` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 */
 type ServicePO struct {
-	Name      string       `gorm:"primaryKey"`
-	Retry     []*RetryInfo `gorm:"serializer:json;type:text"` // 重试信息
-	Failed    []*RetryInfo `gorm:"serializer:json;type:text"` // 失败信息
-	Offset    int64        `gorm:"column:offset"`             // 消费位置，等于最后一次消费的事件id
-	CreatedAt time.Time    `gorm:"index"`                     // 记录创建时间
-	UpdatedAt time.Time    `gorm:"index"`                     // 记录的更新时间
+	Name      string    `gorm:"primaryKey"`
+	CreatedAt time.Time `gorm:"index"` // 记录创建时间
+	UpdatedAt time.Time `gorm:"index"` // 记录的更新时间
 }
 
 func (o *ServicePO) GetID() string {
@@ -130,4 +136,41 @@ func eventPersist(event *dddfirework.DomainEvent) (*EventPO, error) {
 		Event:          event,
 		EventCreatedAt: event.CreatedAt,
 	}, nil
+}
+
+/*
+CREATE TABLE `ddd_domain_service_event` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `service` varchar(30) DEFAULT NULL,
+  `sender` varchar(255) DEFAULT NULL,
+  `event_id` bigint NOT NULL,
+  `retry_count` bigint DEFAULT NULL,
+  `status` tinyint DEFAULT NULL,
+  `failed_message` text,
+  `event_created_at` datetime NOT NULL,
+  `next_time` datetime NOT NULL,
+  `run_at` datetime DEFAULT '1970-01-01 00:00:01',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_service_event_id` (`service`,`event_id`),
+  KEY `idx_service_status_next_time` (`service`,`status`,`next_time`),
+  KEY `idx_ddd_domain_service_event_event_created_at` (`event_created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+*/
+
+// ServiceEventPO 记录service对event的处理情况
+type ServiceEventPO struct {
+	ID             int64     `gorm:"primaryKey;autoIncrement"`
+	Service        string    `gorm:"type:varchar(30);column:service;uniqueIndex:idx_service_event_id;index:idx_service_status_next_time;"`
+	Sender         string    `gorm:"type:varchar(255);column:sender"` // 事件发出实体 ID
+	EventID        int64     `gorm:"column:event_id;uniqueIndex:idx_service_event_id;not null"`
+	RetryCount     int       `gorm:"column:retry_count"`                                                              // 重试次数
+	Status         int8      `gorm:"column:status;index:idx_service_status_next_time;"`                               // service event状态
+	FailedMessage  string    `gorm:"type:text;column:failed_message"`                                                 // 失败详情
+	EventCreatedAt time.Time `gorm:"type:datetime;index;not null"`                                                    // 事件的创建时间
+	NextTime       time.Time `gorm:"type:datetime;index:idx_service_status_next_time;not null"`                       // 事件可以运行的事件
+	RunAt          time.Time `gorm:"type:datetime;zeroValue:1970-01-01 00:00:01;default:'1970-01-01 00:00:01+00:00'"` // 事件真实运行时间，单纯记录下
+}
+
+func (o *ServiceEventPO) TableName() string {
+	return "ddd_domain_service_event"
 }

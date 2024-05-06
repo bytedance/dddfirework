@@ -35,7 +35,8 @@ type SendType string
 
 const (
 	SendTypeNormal      SendType = "normal"      // 普通事件
-	SendTypeFIFO        SendType = "FIFO"        // 保序事件,即事件以 Sender 的发送时间顺序被消费执行
+	SendTypeFIFO        SendType = "FIFO"        // 保序事件,即事件以 Sender 的发送时间顺序被消费执行,且前序事件执行失败时会阻塞后续事件执行
+	SendTypeLaxFIFO     SendType = "LaxFIFO"     // 保序事件,即事件以 Sender 的发送时间顺序被消费执行,但前序事件的执行成败不影响后续事件
 	SendTypeTransaction SendType = "transaction" // 事务事件
 	SendTypeDelay       SendType = "delay"       // 延时发送
 )

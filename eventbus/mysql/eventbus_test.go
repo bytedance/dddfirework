@@ -65,7 +65,7 @@ func (t *testEvent) GetSender() string {
 }
 
 func initModel(db *gorm.DB) {
-	if err := db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{}, &Transaction{}); err != nil {
+	if err := db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{}, &Transaction{}, &ServiceEventPO{}); err != nil {
 		panic(err)
 	}
 
@@ -158,7 +158,7 @@ func TestEventBusConcurrent(t *testing.T) {
 	wg.Wait()
 
 	var eventCount int64
-	db.Model(&EventPO{}).Count(&eventCount)
+	db.Model(&ServiceEventPO{}).Count(&eventCount)
 	// 保证所有事件都能消费到
 	assert.Equal(t, eventCount, int64(len(ids)))
 	curr := time.Time{}
@@ -195,12 +195,13 @@ func TestEventBusConcurrentFailed(t *testing.T) {
 	err := eventBus.handleEvents()
 	assert.NoError(t, err)
 
-	service := &ServicePO{}
+	var count int64
 	err = db.Transaction(func(tx *gorm.DB) error {
-		return tx.Where("name = ?", "test_concurrent_failed").First(service).Error
+		return tx.Model(&ServiceEventPO{}).Where("service = ?", "test_concurrent_failed").
+			Where("status = ?", ServiceEventStatusFailed).Count(&count).Error
 	})
 	assert.NoError(t, err)
-	assert.Len(t, service.Failed, 100)
+	assert.Equal(t, int(count), 100)
 
 }
 
@@ -236,7 +237,7 @@ func TestEventBusRetry(t *testing.T) {
 	}
 
 	var eventCount int64
-	db.Model(&EventPO{}).Count(&eventCount)
+	db.Model(&ServiceEventPO{}).Count(&eventCount)
 	assert.Equal(t, eventCount, int64(len(counts)))
 	for id, count := range counts {
 		if id == "0" {
@@ -299,10 +300,11 @@ func TestEventBusRetryStrategy(t *testing.T) {
 			}
 		}
 
-		service := &ServicePO{}
-		err := tx.Where("name = ?", "test_retry_strategy").First(service).Error
+		var count int64
+		err := tx.Model(&ServiceEventPO{}).Where("service = ?", "test_retry_strategy").
+			Where("status = ?", ServiceEventStatusInit).Where("retry_count > 0").Count(&count).Error
 		assert.NoError(t, err)
-		assert.Len(t, service.Retry, 1)
+		assert.Equal(t, int(count), 1)
 		return err
 	})
 
@@ -317,6 +319,7 @@ func TestEventBusFailed(t *testing.T) {
 		opt.RetryStrategy = &LimitRetry{
 			Limit: 2,
 		}
+		opt.ConsumeConcurrent = 1
 	})
 	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
 		if evt.Type == "test_failed" {
@@ -335,48 +338,11 @@ func TestEventBusFailed(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	service := &ServicePO{}
-	err := db.Where("name = ?", "test_fail").First(service).Error
+	var count int64
+	err := db.Model(&ServiceEventPO{}).Where("service = ?", "test_fail").
+		Where("status = ?", ServiceEventStatusFailed).Count(&count).Error
 	assert.NoError(t, err)
-	assert.Len(t, service.Failed, 10)
-}
-
-func TestEventBusQueueLimit(t *testing.T) {
-	ctx := context.Background()
-	db := testsuit.InitMysql()
-
-	queueLimit := 100
-	eventCount := queueLimit + 100
-	eventBus := NewEventBus("test_queue_limit", db, func(opt *Options) {
-		opt.RetryStrategy = &LimitRetry{
-			Limit: -1,
-		}
-		opt.LimitPerRun = eventCount * 2
-		opt.ConsumeConcurrent = 10
-		opt.QueueLimit = queueLimit
-	})
-	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
-		if evt.Type == "test_queue_limit" {
-			return fmt.Errorf("failed")
-		}
-		return nil
-	})
-
-	for i := 0; i < eventCount; i++ {
-		err := eventBus.Dispatch(ctx, dddfirework.NewDomainEvent(&testEvent{EType: "test_queue_limit", Data: "failed"}))
-		assert.NoError(t, err)
-	}
-
-	err := eventBus.handleEvents()
-	assert.NoError(t, err)
-
-	service := &ServicePO{}
-	err = db.Transaction(func(tx *gorm.DB) error {
-		return tx.Where("name = ?", "test_queue_limit").First(service).Error
-	})
-	assert.NoError(t, err)
-	assert.Len(t, service.Failed, queueLimit)
-
+	assert.Equal(t, int(count), 10)
 }
 
 func TestEngine(t *testing.T) {
@@ -553,14 +519,15 @@ func TestRollback(t *testing.T) {
 func TestClean(t *testing.T) {
 	ctx := context.Background()
 	// 使用sqlite防止数据被其它单测影响
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	assert.NoError(t, err)
-	err = db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{})
+	err = db.AutoMigrate(&ServiceEventPO{}, &EventPO{}, &ServicePO{}, &testPO{})
 	assert.NoError(t, err)
 
 	eventBus := NewEventBus("test_clean", db, func(opt *Options) {
 		// 消费完成的事件保留时间为0
 		opt.RetentionTime = 0 * time.Hour
+		opt.ConsumeConcurrent = 1
 	})
 	// 插入一些事件
 	num := 10
@@ -584,13 +551,16 @@ func TestClean(t *testing.T) {
 	err = eventBus.cleanEvents()
 	assert.NoError(t, err)
 
-	// 校验 lowestServicePO.offset 之前的event 其它的都删掉了
-	var slowestServicePO ServicePO
-	err = db.Order("offset asc").Take(&slowestServicePO).Error
+	events := []*EventPO{}
+	err = db.Model(&EventPO{}).Find(&events).Error
 	assert.NoError(t, err)
-
+	eventIDs := make([]int64, 0)
+	for _, event := range events {
+		eventIDs = append(eventIDs, event.ID)
+	}
+	// 确认现存的event的已经没有成功的了
 	count := int64(0)
-	err = db.Model(&EventPO{}).Where("id < ?", slowestServicePO.Offset).Count(&count).Error
+	err = db.Model(&ServiceEventPO{}).Where("event_id in ?", eventIDs).Where("status = ?", ServiceEventStatusSuccess).Count(&count).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 0, int(count))
 }
@@ -599,9 +569,9 @@ func TestClean(t *testing.T) {
 func TestCleanFailed(t *testing.T) {
 	ctx := context.Background()
 	// 使用sqlite防止数据被其它单测影响
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	assert.NoError(t, err)
-	err = db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{})
+	err = db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{}, &ServiceEventPO{})
 	assert.NoError(t, err)
 
 	eventBus := NewEventBus("test_clean", db, func(opt *Options) {
@@ -634,22 +604,18 @@ func TestCleanFailed(t *testing.T) {
 	assert.NoError(t, err)
 
 	// 校验除了 failed 和 retry中的event 其它的都删掉了
-	var servicePO ServicePO
-	err = db.Where("name = ?", "test_clean").Take(&servicePO).Error
+	events := []*EventPO{}
+	err = db.Model(&EventPO{}).Find(&events).Error
 	assert.NoError(t, err)
-
 	eventIDs := make([]int64, 0)
-	for _, si := range servicePO.Retry {
-		eventIDs = append(eventIDs, si.ID)
+	for _, event := range events {
+		eventIDs = append(eventIDs, event.ID)
 	}
-	for _, si := range servicePO.Failed {
-		eventIDs = append(eventIDs, si.ID)
-	}
-
+	// 确认现存的event的已经没有成功的了
 	count := int64(0)
-	err = db.Model(&EventPO{}).Where("id in ?", eventIDs).Count(&count).Error
+	err = db.Model(&ServiceEventPO{}).Where("event_id in ?", eventIDs).Where("status = ?", ServiceEventStatusSuccess).Count(&count).Error
 	assert.NoError(t, err)
-	assert.Equal(t, len(eventIDs), int(count))
+	assert.Equal(t, 0, int(count))
 }
 
 func TestCleanConcurrent(t *testing.T) {
@@ -658,7 +624,7 @@ func TestCleanConcurrent(t *testing.T) {
 	// 使用独立database防止数据被其它单测影响
 	db := testsuit.InitMysql()
 	db = testsuit.InitMysqlWithDatabase(db, "test_clean")
-	if err := db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{}); err != nil {
+	if err := db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{}, &ServiceEventPO{}); err != nil {
 		panic(err)
 	}
 	eventBus := NewEventBus("test_clean", db, func(opt *Options) {
@@ -695,13 +661,116 @@ func TestCleanConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	// 校验 lowestServicePO.event_created_at 之前的event 其它的都删掉了
-	var slowestServicePO ServicePO
-	err = db.Order("offset asc").Take(&slowestServicePO).Error
+	// 校验除了 failed 和 retry中的event 其它的都删掉了
+	events := []*EventPO{}
+	err = db.Model(&EventPO{}).Find(&events).Error
 	assert.NoError(t, err)
-
+	eventIDs := make([]int64, 0)
+	for _, event := range events {
+		eventIDs = append(eventIDs, event.ID)
+	}
+	// 确认现存的event的已经没有成功的了
 	count := int64(0)
-	err = db.Model(&EventPO{}).Where("id < ?", slowestServicePO.Offset).Count(&count).Error
+	err = db.Model(&ServiceEventPO{}).Where("event_id in ?", eventIDs).Where("status = ?", ServiceEventStatusSuccess).Count(&count).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 0, int(count))
+}
+
+func TestFIFO(t *testing.T) {
+	ctx := context.Background()
+	db := testsuit.InitMysql()
+	if err := db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{}, &ServiceEventPO{}); err != nil {
+		panic(err)
+	}
+	eventBus := NewEventBus("test_fifo", db, func(opt *Options) {
+		opt.ConsumeConcurrent = 5
+	})
+	// 插入一些事件
+	num := 5
+	for num > 0 {
+		evt := dddfirework.NewDomainEvent(&testEvent{EType: "test_fifo", Data: "ttt"}, dddfirework.WithSendType(dddfirework.SendTypeFIFO))
+		err := eventBus.Dispatch(ctx, evt)
+		time.Sleep(1 * time.Millisecond)
+		assert.NoError(t, err)
+		num--
+	}
+
+	events := make([]*dddfirework.DomainEvent, 0)
+	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
+		t.Logf("handle event ID %s,CreatedAt %s", evt.ID, evt.CreatedAt)
+		// 必须停1ms，因为mysql datetime 只精确到1ms，这样每个event 的run_at 有明显的大小差别
+		time.Sleep(1 * time.Millisecond)
+		if evt.Type == "test_fifo" {
+			events = append(events, evt)
+		}
+		return nil
+	})
+	// 处理事件
+	for i := 0; i < 10; i++ {
+		// 得等一下， 不然 scanEvents 时根据next_time < time.Now 可能小于service_event插入时的next_time
+		time.Sleep(100 * time.Millisecond)
+		err := eventBus.handleEvents()
+		assert.NoError(t, err)
+	}
+
+	// 保证消费顺序一定是递增的
+	curr := time.Time{}
+	for _, e := range events {
+		assert.GreaterOrEqual(t, e.CreatedAt, curr)
+		curr = e.CreatedAt
+	}
+
+}
+
+func TestLaxFIFO(t *testing.T) {
+	// 初始化随机数种子
+	rand.Seed(time.Now().UnixNano())
+	ctx := context.Background()
+	db := testsuit.InitMysql()
+	if err := db.AutoMigrate(&EventPO{}, &ServicePO{}, &testPO{}, &ServiceEventPO{}); err != nil {
+		panic(err)
+	}
+	eventBus := NewEventBus("test_lax_fifo", db, func(opt *Options) {
+		opt.ConsumeConcurrent = 2
+		opt.RetryLimit = -1
+		opt.RetryInterval = 1 * time.Millisecond
+	})
+	// 插入一些事件
+	num := 5
+	for num > 0 {
+		evt := dddfirework.NewDomainEvent(&testEvent{EType: "test_lax_fifo", Data: "ttt"}, dddfirework.WithSendType(dddfirework.SendTypeLaxFIFO))
+		err := eventBus.Dispatch(ctx, evt)
+		time.Sleep(1 * time.Millisecond)
+		assert.NoError(t, err)
+		num--
+	}
+	events := make([]*dddfirework.DomainEvent, 0)
+	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
+		t.Logf("handle event ID %s,CreatedAt %s", evt.ID, evt.CreatedAt)
+		// 必须停1ms，因为mysql datetime 只精确到1ms，这样每个event 的run_at 有明显的大小差别
+		time.Sleep(1 * time.Millisecond)
+		if evt.Type == "test_lax_fifo" {
+			events = append(events, evt)
+		}
+		randomNum := rand.Intn(10-1+1) + 1
+		if randomNum%2 == 0 {
+			return fmt.Errorf("random error %d", randomNum)
+		}
+		return nil
+	})
+	// 处理事件
+	for i := 0; i < 20; i++ {
+		// 得等一下， 不然 scanEvents 时根据next_time < time.Now 可能小于service_event插入时的next_time
+		time.Sleep(100 * time.Millisecond)
+		err := eventBus.handleEvents()
+		assert.NoError(t, err)
+	}
+
+	// 保证消费顺序一定是递增的
+	curr := time.Time{}
+	for _, e := range events {
+		assert.GreaterOrEqual(t, e.CreatedAt, curr)
+		curr = e.CreatedAt
+	}
+
 }

@@ -24,5 +24,5 @@ import (
 )
 
 func NewStdr(name string) logr.Logger {
-	return stdr.New(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile)).WithName(name)
+	return stdr.New(stdlog.New(os.Stdout, "", stdlog.LstdFlags|stdlog.Lshortfile)).WithName(name)
 }

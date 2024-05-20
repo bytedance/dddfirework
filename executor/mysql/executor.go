@@ -88,9 +88,6 @@ var opMap = map[ddd.OpType]execFunc{
 		for i, m := range a.Models {
 			if len(a.PrevModels) > i {
 				fields := DiffModel(m, a.PrevModels[i])
-				if len(fields) == 0 {
-					continue
-				}
 				if err := db.Select(fields).Updates(m).Error; err != nil {
 					return err
 				}

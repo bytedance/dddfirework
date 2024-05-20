@@ -33,58 +33,28 @@ func hasValue(tag, attr string) bool {
 	return false
 }
 
-func diffValue(a, b reflect.Value) (fields []string, diff bool) {
-	a, b = reflect.Indirect(a), reflect.Indirect(b)
-	if !a.IsValid() || !b.IsValid() {
-		if a.IsValid() {
-			b = reflect.New(a.Type()).Elem()
-		} else if b.IsValid() {
-			a = reflect.New(b.Type()).Elem()
-		} else {
-			diff = false
-			return
-		}
-	}
-	if a.IsZero() && b.IsZero() {
-		diff = false
-		return
-	}
-	switch {
-	case a.Kind() == reflect.Struct:
-		fields = diffStruct(a, b)
-		diff = len(fields) > 0
-	case a.Comparable() && b.Comparable():
-		diff = !a.Equal(b)
-	case a.CanInterface() && b.CanInterface():
-		diff = !reflect.DeepEqual(a.Interface(), b.Interface())
-	default:
-		diff = true
-	}
-	return
-}
-
 func diffStruct(currVal, prevVal reflect.Value) []string {
 	result := make([]string, 0)
 	poType := currVal.Type()
 	for i := 0; i < currVal.NumField(); i++ {
 		field := poType.Field(i)
-		fieldVal := currVal.Field(i)
-		prevFiledVal := prevVal.Field(i)
-		fieldVal, prevFiledVal = reflect.Indirect(fieldVal), reflect.Indirect(prevFiledVal)
+		fieldVal, prevFiledVal := currVal.Field(i), prevVal.Field(i)
+		if !fieldVal.CanInterface() {
+			continue
+		}
 		fieldName := field.Name
 		fieldTag := field.Tag.Get("gorm")
-		if fieldVal.Kind() == reflect.Struct {
-			if structDiff, diff := diffValue(fieldVal, prevFiledVal); diff {
-				if field.Anonymous || hasValue(fieldTag, "embedded") {
-					result = append(result, structDiff...)
-				} else {
-					result = append(result, fieldName)
-				}
+		if fieldVal.Kind() == reflect.Struct && (field.Anonymous || hasValue(fieldTag, "embedded")) {
+			structDiff := diffStruct(fieldVal, prevFiledVal)
+			result = append(result, structDiff...)
+		} else if fieldVal.Comparable() {
+			if fieldVal.Equal(prevFiledVal) {
+				continue
 			}
+			result = append(result, fieldName)
 		} else {
-			if _, diff := diffValue(fieldVal, prevFiledVal); diff {
-				result = append(result, fieldName)
-			}
+			// todo 不能比对的字段先一律更新，待优化比对方案
+			result = append(result, fieldName)
 		}
 	}
 	return result

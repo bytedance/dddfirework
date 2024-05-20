@@ -208,14 +208,7 @@ func walk(entity, parent IEntity, f func(entity, parent IEntity, children map[st
 // entityDiff 递归对比实体所有层级的子实体，生成子实体的差异
 func entityDiff(parent IEntity, pool entitySnapshotPool) []*entityChanged {
 	res := make([]*entityChanged, 0)
-	childrenList := findChildren(parent)
-	keys := []string{}
-	for key := range childrenList {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		children := childrenList[key]
+	for key, children := range findChildren(parent) {
 		s1 := makeEntitySet(children)
 		s2 := simpleSet{}
 		if pool[parent] != nil && len(pool[parent].children[key]) > 0 {

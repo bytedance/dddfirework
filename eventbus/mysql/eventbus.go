@@ -452,10 +452,12 @@ func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO
 	if err := tx.Where("service = ?", e.serviceName).
 		// event_created_at 是最权威的前序，但是时间精度问题导致可能前序event可能跟当前event一样，再用event_id 明确下
 		Where("event_id = ?", precedingEvent.ID).First(precedingServiceEvent).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			e.logger.V(logger.LevelInfo).Info("find preceding service_event error", "current event_id", spo.EventID, "err", err)
-			return err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			e.logger.V(logger.LevelInfo).Info("can not find preceding service_event, see it as first event", "current event_id", spo.EventID)
+			return nil
 		}
+		e.logger.V(logger.LevelInfo).Info("find preceding service_event error", "current event_id", spo.EventID, "err", err)
+		return err
 	}
 	// 找不到precedingServiceEvent，则说明前序event 还未被处理
 	if precedingServiceEvent.ID == 0 {
@@ -521,11 +523,12 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO) error {
 				e.logger.Error(err, fmt.Sprintf("panic while handling event(%d)", spo.EventID))
 				e.doRetryStrategy(spo)
 				spo.FailedMessage = fmt.Sprintf("%v", err)
-				// 65535 是FailedMessage 字段的db类型长度
-				if len(spo.FailedMessage) > 65535 {
-					spo.FailedMessage = spo.FailedMessage[:65535]
-				}
 			}
+			// 65535 是FailedMessage 字段的db类型长度
+			if len(spo.FailedMessage) > 65535 {
+				spo.FailedMessage = spo.FailedMessage[:65535]
+			}
+			spo.RunAt = time.Now()
 			// 插入或更新 service_event
 			if err = tx.Save(spo).Error; err != nil {
 				e.logger.Error(err, "create or update service_event error", "current event_id", spo.EventID)
@@ -536,12 +539,12 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO) error {
 		// 如果是保序event，则校验前序event的执行结果
 		if po.Event.SendType == dddfirework.SendTypeFIFO || po.Event.SendType == dddfirework.SendTypeLaxFIFO {
 			if err = e.checkPrecedingEvent(tx, spo, po); err != nil {
+				spo.FailedMessage = fmt.Sprintf("%v", err)
 				return err
 			}
 		}
 		e.logger.V(logger.LevelInfo).Info("eventbus handle event", "event db id", spo.EventID, "event id", po.EventID)
 		err = e.cb(ctx, po.Event)
-		spo.RunAt = time.Now()
 		if err != nil {
 			// 更新 retry_limit 以及 next_time，超出重试限制，则status置为失败。为了支持自定义RetryStrategy，所以通过NextTime 而不是RunAt来控制重试间隔
 			e.doRetryStrategy(spo)

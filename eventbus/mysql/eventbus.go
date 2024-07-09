@@ -352,19 +352,28 @@ func (e *EventBus) getScanEvents() ([]*EventPO, error) {
 			eventOffset = finishedServiceEvent.EventID + 1
 		}
 	}
+	// 每次只扫描 event.id=[eventOffset,eventBound) 区间内的event. eventBound是在eventOffset 超过重试次数之前，最大可以处理到的event
+	// 加上这个 是防止未消费event 过多时导致的慢sql，因为ddd_domain_event.id是连续，这样可以限制联表查询时的数量。
+	mul := 1
+	if e.opt.RetryLimit > 1 {
+		mul = e.opt.RetryLimit
+	}
+	eventBound := eventOffset + int64(e.opt.LimitPerRun*mul)
 	eventPOs := make([]*EventPO, 0)
 	if err := e.db.
 		// 只抓取当前service的 service_event参与 left join
 		Joins("left join ddd_domain_service_event ON ddd_domain_event.id = ddd_domain_service_event.event_id and ddd_domain_service_event.service = ?", e.serviceName).
 		Where("ddd_domain_event.event_created_at >= ?", time.Now().Add(-scanStartTime)).
 		Where("ddd_domain_event.id >= ?", eventOffset).
+		Where("ddd_domain_event.id < ?", eventBound).
 		Where(
 			// event_id 为null 表示event 还未被当前service service_event引用
 			e.db.Where("ddd_domain_service_event.event_id is null").
 				// 被当前service service_event 引用但未处理成功且到了新的重试时间的event
 				Or("ddd_domain_service_event.status = ? and ddd_domain_service_event.next_time <= ?", ServiceEventStatusInit, time.Now())).
 		Order("ddd_domain_event.event_created_at, ddd_domain_event.id").
-		Limit(e.opt.LimitPerRun).Find(&eventPOs).Error; err != nil {
+		Limit(e.opt.LimitPerRun).
+		Find(&eventPOs).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// 没找到就是没有event 要处理
 			return nil, nil

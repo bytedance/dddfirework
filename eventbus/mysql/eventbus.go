@@ -326,12 +326,13 @@ func (e *EventBus) initService() error {
 }
 
 // getScanEvents 扫描待处理的event：无service_event的event; status=init and 到达下次可执行时间的event
-func (e *EventBus) getScanEvents(curScanStartTime time.Time) ([]*EventPO, error) {
+func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventPO, error) {
+	eventOffset := scanStartEventID
 	// 从service_event 视角查询最早的 需要的处理的event。其实仅凭下面的联表查询即可一步做到 返回待处理的event，但联表查询可能是性能瓶颈，因此通过计算 eventOffset来减少联表查询的数据量
-	eventOffset := int64(0)
 	retryableServiceEvent := &ServiceEventPO{}
 	if err := e.db.Where("service = ?", e.serviceName).
 		Where("status = ?", ServiceEventStatusInit).
+		Where("event_id >= ?", scanStartEventID).
 		Order("event_id").First(retryableServiceEvent).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
@@ -340,8 +341,10 @@ func (e *EventBus) getScanEvents(curScanStartTime time.Time) ([]*EventPO, error)
 	if retryableServiceEvent.EventID > 0 {
 		eventOffset = retryableServiceEvent.EventID
 	} else {
+		// 如果没有init service_event， 那就说明要么service_event 为空，要么都已经被处理了（成功或失败）
 		finishedServiceEvent := &ServiceEventPO{}
 		if err := e.db.Where("service = ?", e.serviceName).
+			Where("event_id >= ?", scanStartEventID).
 			Order("event_id").Last(finishedServiceEvent).Error; err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, err
@@ -352,18 +355,17 @@ func (e *EventBus) getScanEvents(curScanStartTime time.Time) ([]*EventPO, error)
 			eventOffset = finishedServiceEvent.EventID + 1
 		}
 	}
-	// 每次只扫描 event.id=[eventOffset,eventBound) 区间内的event. eventBound是在eventOffset 超过重试次数之前，最大可以处理到的event
-	// 加上这个 是防止未消费event 过多时导致的慢sql，因为ddd_domain_event.id是连续，这样可以限制联表查询时的数量。
-	mul := 1
+	// 每次只扫描 event.id=[eventOffset,eventBound) 区间内的event，防止未消费event 过多时导致的慢sql，
+	eventBound := eventOffset + int64(e.opt.LimitPerRun)
+	//eventBound是在eventOffset 超过重试次数之前，最大可以处理到的event
 	if e.opt.RetryLimit > 1 {
-		mul = e.opt.RetryLimit
+		eventBound = eventOffset + int64(e.opt.LimitPerRun*e.opt.RetryLimit)
 	}
-	eventBound := eventOffset + int64(e.opt.LimitPerRun*mul)
+
 	eventPOs := make([]*EventPO, 0)
 	if err := e.db.
 		// 只抓取当前service的 service_event参与 left join
 		Joins("left join ddd_domain_service_event ON ddd_domain_event.id = ddd_domain_service_event.event_id and ddd_domain_service_event.service = ?", e.serviceName).
-		Where("ddd_domain_event.event_created_at >= ?", curScanStartTime).
 		Where("ddd_domain_event.id >= ?", eventOffset).
 		Where("ddd_domain_event.id < ?", eventBound).
 		Where(
@@ -405,7 +407,7 @@ func (e *EventBus) doRetryStrategy(spo *ServiceEventPO) {
 	return
 }
 
-func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO, curScanStartTime time.Time) {
+func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO, scanStartEventID int64) {
 	eventChan := make(chan *EventPO, len(eventPOs))
 	for _, e := range eventPOs {
 		eventChan <- e
@@ -421,7 +423,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO, curS
 			cb := func(ctx context.Context, po *EventPO) {
 				// 某个event 的处理成败，不影响后续事件的处理
 				// 对于保序事件，因为前序事件没有执行，后面同sender event也不用继续了。但毕竟后续还有非保序事件要处理，所以也不会因为ErrPrecedingEventNotReady 就终止事件消费流程
-				_ = e.handleEvent(ctx, po, curScanStartTime)
+				_ = e.handleEvent(ctx, po, scanStartEventID)
 			}
 			for po := range eventChan {
 				cb(ctx, po)
@@ -432,7 +434,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO, curS
 	return
 }
 
-func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO *EventPO, curScanStartTime time.Time) error {
+func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO *EventPO, scanStartEventID int64) error {
 	// 保序event 要求sender 不能为空
 	if len(eventPO.Sender) == 0 {
 		err := fmt.Errorf("event sender can not be empty when event type is fifo")
@@ -455,15 +457,18 @@ func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO
 	if precedingEvent.ID == 0 {
 		e.logger.V(logger.LevelInfo).Info("can not find preceding event, see it as first event", "current event_id", spo.EventID)
 		return nil
+	} else if precedingEvent.ID < scanStartEventID {
+		// 如果堵塞的event在event保留期内未被处理成功，在scanStartEventID之前的service_event不会被扫描到，也永远不会被处理，此时放弃它们，不要导致后续的event 处理堵塞。
+		e.logger.V(logger.LevelInfo).Info("preceding event is expired, see it as first event", "current event_id", spo.EventID)
+		return nil
 	}
 	// 找到前序service_event
 	precedingServiceEvent := &ServiceEventPO{}
 	if err := tx.Where("service = ?", e.serviceName).
 		Where("event_id = ?", precedingEvent.ID).
-		// 如果堵塞的event在event保留期内未被处理成功，在curScanStartTime 之前的service_event不会被扫描到，也永远不会被处理，此时放弃它们，不要导致后续的event 处理堵塞。
-		Where("event_created_at >= ?", curScanStartTime).First(precedingServiceEvent).Error; err != nil {
+		First(precedingServiceEvent).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			e.logger.V(logger.LevelInfo).Info("can not find preceding service_event or it's expired, see it as first event", "current event_id", spo.EventID)
+			e.logger.V(logger.LevelInfo).Info("can not find preceding service_event, see it as first event", "current event_id", spo.EventID)
 			return nil
 		}
 		e.logger.V(logger.LevelInfo).Info("find preceding service_event error", "current event_id", spo.EventID, "err", err)
@@ -495,7 +500,7 @@ func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO
 
 // handleEvent, 多实例并发场景下先锁住event，check service_event状态，如果是保序event，则check前序event状态，check通过后，执行event handler
 // 执行成功，则保存执行结果，执行失败则根据RetryStrategy更新retryCount/nextTime/failedMessage
-func (e *EventBus) handleEvent(ctx context.Context, po *EventPO, curScanStartTime time.Time) error {
+func (e *EventBus) handleEvent(ctx context.Context, po *EventPO, scanStartEventID int64) error {
 	// 下面的db 操作一定要全部使用 tx
 	fn := func(tx *gorm.DB) (err error) {
 		// 找到并锁住event
@@ -548,7 +553,7 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO, curScanStartTim
 
 		// 如果是保序event，则校验前序event的执行结果
 		if po.Event.SendType == dddfirework.SendTypeFIFO || po.Event.SendType == dddfirework.SendTypeLaxFIFO {
-			if err = e.checkPrecedingEvent(tx, spo, po, curScanStartTime); err != nil {
+			if err = e.checkPrecedingEvent(tx, spo, po, scanStartEventID); err != nil {
 				spo.FailedMessage = fmt.Sprintf("%v", err)
 				return err
 			}
@@ -571,7 +576,16 @@ func (e *EventBus) handleEvents() error {
 	e.logger.V(logger.LevelDebug).Info("handle events")
 	ctx := context.Background()
 	curScanStartTime := time.Now().Add(-scanStartTime)
-	scanEvents, err := e.getScanEvents(curScanStartTime)
+	// 根据 curScanStartTime确定扫描起点
+	scanStartEvent := &EventPO{}
+	if err := e.db.Where("event_created_at >= ?", curScanStartTime).
+		Order("id").First(scanStartEvent).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	scanEvents, err := e.getScanEvents(scanStartEvent.ID)
 	if err != nil {
 		return err
 	}
@@ -579,7 +593,7 @@ func (e *EventBus) handleEvents() error {
 		e.logger.V(logger.LevelDebug).Info("find empty service_event, ignore")
 		return nil
 	}
-	e.dispatchEvents(ctx, scanEvents, curScanStartTime)
+	e.dispatchEvents(ctx, scanEvents, scanStartEvent.ID)
 	return nil
 }
 

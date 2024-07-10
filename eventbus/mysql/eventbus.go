@@ -60,6 +60,7 @@ type IRetryStrategy interface {
 	// Next 获取下一次重试的策略，返回 nil 表示不再重试
 	// 当 RetryInfo.RetryCount == 0 表示初始化状态，通过 Next 获取第一次重试信息
 	Next(info *RetryInfo) *RetryInfo
+	RetryCount() int
 }
 
 // LimitRetry 设定最大重试次数，不指定间隔
@@ -76,6 +77,9 @@ func (c *LimitRetry) Next(info *RetryInfo) *RetryInfo {
 		RetryCount: info.RetryCount + 1,
 		RetryTime:  time.Now(),
 	}
+}
+func (c *LimitRetry) RetryCount() int {
+	return c.Limit
 }
 
 // IntervalRetry 指定固定间隔和次数
@@ -98,6 +102,9 @@ func (c *IntervalRetry) Next(info *RetryInfo) *RetryInfo {
 		RetryTime:  lastTime.Add(c.Interval),
 	}
 }
+func (c *IntervalRetry) RetryCount() int {
+	return c.Limit
+}
 
 // CustomRetry 自定义重试次数和间隔
 type CustomRetry struct {
@@ -117,6 +124,9 @@ func (c *CustomRetry) Next(info *RetryInfo) *RetryInfo {
 		RetryCount: info.RetryCount + 1,
 		RetryTime:  lastTime.Add(c.Intervals[info.RetryCount]),
 	}
+}
+func (c *CustomRetry) RetryCount() int {
+	return len(c.Intervals)
 }
 
 type Options struct {
@@ -359,8 +369,8 @@ func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventPO, error) {
 	// 每次只扫描 event.id=[eventOffset,eventBound) 区间内的event，防止未消费event 过多时导致的慢sql，
 	eventBound := eventOffset + int64(e.opt.LimitPerRun)
 	//eventBound是在eventOffset 超过重试次数之前，最大可以处理到的event
-	if e.opt.RetryLimit > 1 {
-		eventBound = eventOffset + int64(e.opt.LimitPerRun*e.opt.RetryLimit)
+	if e.retryStrategy.RetryCount() > 1 {
+		eventBound = eventOffset + int64(e.opt.LimitPerRun*e.retryStrategy.RetryCount())
 	}
 
 	eventPOs := make([]*EventPO, 0)
@@ -419,13 +429,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO, scan
 	for i := 0; i < e.opt.ConsumeConcurrent; i++ {
 		wg.Add(1)
 		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					err := fmt.Errorf("err: %v stack:%s", r, string(debug.Stack()))
-					e.logger.Error(err, "panic while handleEvent")
-				}
-				wg.Done()
-			}()
+			defer wg.Done()
 			cb := func(ctx context.Context, po *EventPO) {
 				// 某个event 的处理成败，不影响后续事件的处理
 				// 对于保序事件，因为前序事件没有执行，后面同sender event也不用继续了。但毕竟后续还有非保序事件要处理，所以也不会因为ErrPrecedingEventNotReady 就终止事件消费流程

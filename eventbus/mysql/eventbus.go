@@ -419,8 +419,13 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO, scan
 	for i := 0; i < e.opt.ConsumeConcurrent; i++ {
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
-
+			defer func() {
+				if r := recover(); r != nil {
+					err := fmt.Errorf("err: %v stack:%s", r, string(debug.Stack()))
+					e.logger.Error(err, "panic while handleEvent")
+				}
+				wg.Done()
+			}()
 			cb := func(ctx context.Context, po *EventPO) {
 				// 某个event 的处理成败，不影响后续事件的处理
 				// 对于保序事件，因为前序事件没有执行，后面同sender event也不用继续了。但毕竟后续还有非保序事件要处理，所以也不会因为ErrPrecedingEventNotReady 就终止事件消费流程
@@ -574,7 +579,13 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO, scanStartEventI
 }
 
 func (e *EventBus) handleEvents() error {
-	e.logger.V(logger.LevelDebug).Info("handle events")
+	e.logger.Info("handle events start")
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("err: %v stack:%s", r, string(debug.Stack()))
+			e.logger.Error(err, "panic while handleEvents")
+		}
+	}()
 	ctx := context.Background()
 	curScanStartTime := time.Now().Add(-scanStartTime)
 	// 根据 curScanStartTime确定扫描起点
@@ -587,13 +598,15 @@ func (e *EventBus) handleEvents() error {
 	}
 	scanEvents, err := e.getScanEvents(scanStartEvent.ID)
 	if err != nil {
+		e.logger.Error(err, "panic while getScanEvents")
 		return err
 	}
 	if len(scanEvents) == 0 {
-		e.logger.V(logger.LevelDebug).Info("find empty service_event, ignore")
+		e.logger.Info("find empty service_event, ignore")
 		return nil
 	}
 	e.dispatchEvents(ctx, scanEvents, scanStartEvent.ID)
+	e.logger.Info("handle events end")
 	return nil
 }
 

@@ -333,7 +333,7 @@ func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventPO, error) {
 	if err := e.db.Where("service = ?", e.serviceName).
 		Where("status = ?", ServiceEventStatusInit).
 		Where("event_id >= ?", scanStartEventID).
-		Order("event_id").First(retryableServiceEvent).Error; err != nil {
+		Order("event_id").Take(retryableServiceEvent).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -345,7 +345,8 @@ func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventPO, error) {
 		finishedServiceEvent := &ServiceEventPO{}
 		if err := e.db.Where("service = ?", e.serviceName).
 			Where("event_id >= ?", scanStartEventID).
-			Order("event_id").Last(finishedServiceEvent).Error; err != nil {
+			// gorm first/last 会带上primary key,所以 first/last 不要与order 混用, db.Limit(1).Find(&user) = db.Take(&user)
+			Order("event_id desc").Take(finishedServiceEvent).Error; err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, err
 			}
@@ -447,7 +448,7 @@ func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO
 		// event_created_at 是最权威的前序，但是时间精度问题导致可能前序event.event_created_at可能跟当前event一样，再用event_id 明确下
 		Where("event_created_at <= ?", eventPO.EventCreatedAt).
 		Where("id < ?", eventPO.ID).
-		Order("event_created_at desc, event_id desc").First(precedingEvent).Error; err != nil {
+		Order("event_created_at desc, event_id desc").Take(precedingEvent).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			e.logger.V(logger.LevelInfo).Info("find preceding event error", "current event_id", spo.EventID, "err", err)
 			return err
@@ -578,8 +579,7 @@ func (e *EventBus) handleEvents() error {
 	curScanStartTime := time.Now().Add(-scanStartTime)
 	// 根据 curScanStartTime确定扫描起点
 	scanStartEvent := &EventPO{}
-	if err := e.db.Where("event_created_at >= ?", curScanStartTime).
-		Order("id").First(scanStartEvent).Error; err != nil {
+	if err := e.db.Where("event_created_at >= ?", curScanStartTime).First(scanStartEvent).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}

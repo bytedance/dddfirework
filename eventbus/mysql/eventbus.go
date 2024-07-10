@@ -326,7 +326,7 @@ func (e *EventBus) initService() error {
 }
 
 // getScanEvents 扫描待处理的event：无service_event的event; status=init and 到达下次可执行时间的event
-func (e *EventBus) getScanEvents() ([]*EventPO, error) {
+func (e *EventBus) getScanEvents(curScanStartTime time.Time) ([]*EventPO, error) {
 	// 从service_event 视角查询最早的 需要的处理的event。其实仅凭下面的联表查询即可一步做到 返回待处理的event，但联表查询可能是性能瓶颈，因此通过计算 eventOffset来减少联表查询的数据量
 	eventOffset := int64(0)
 	retryableServiceEvent := &ServiceEventPO{}
@@ -363,7 +363,7 @@ func (e *EventBus) getScanEvents() ([]*EventPO, error) {
 	if err := e.db.
 		// 只抓取当前service的 service_event参与 left join
 		Joins("left join ddd_domain_service_event ON ddd_domain_event.id = ddd_domain_service_event.event_id and ddd_domain_service_event.service = ?", e.serviceName).
-		Where("ddd_domain_event.event_created_at >= ?", time.Now().Add(-scanStartTime)).
+		Where("ddd_domain_event.event_created_at >= ?", curScanStartTime).
 		Where("ddd_domain_event.id >= ?", eventOffset).
 		Where("ddd_domain_event.id < ?", eventBound).
 		Where(
@@ -405,7 +405,7 @@ func (e *EventBus) doRetryStrategy(spo *ServiceEventPO) {
 	return
 }
 
-func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) {
+func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO, curScanStartTime time.Time) {
 	eventChan := make(chan *EventPO, len(eventPOs))
 	for _, e := range eventPOs {
 		eventChan <- e
@@ -421,7 +421,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) {
 			cb := func(ctx context.Context, po *EventPO) {
 				// 某个event 的处理成败，不影响后续事件的处理
 				// 对于保序事件，因为前序事件没有执行，后面同sender event也不用继续了。但毕竟后续还有非保序事件要处理，所以也不会因为ErrPrecedingEventNotReady 就终止事件消费流程
-				_ = e.handleEvent(ctx, po)
+				_ = e.handleEvent(ctx, po, curScanStartTime)
 			}
 			for po := range eventChan {
 				cb(ctx, po)
@@ -432,7 +432,7 @@ func (e *EventBus) dispatchEvents(ctx context.Context, eventPOs []*EventPO) {
 	return
 }
 
-func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO *EventPO) error {
+func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO *EventPO, curScanStartTime time.Time) error {
 	// 保序event 要求sender 不能为空
 	if len(eventPO.Sender) == 0 {
 		err := fmt.Errorf("event sender can not be empty when event type is fifo")
@@ -459,10 +459,11 @@ func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO
 	// 找到前序service_event
 	precedingServiceEvent := &ServiceEventPO{}
 	if err := tx.Where("service = ?", e.serviceName).
-		// event_created_at 是最权威的前序，但是时间精度问题导致可能前序event可能跟当前event一样，再用event_id 明确下
-		Where("event_id = ?", precedingEvent.ID).First(precedingServiceEvent).Error; err != nil {
+		Where("event_id = ?", precedingEvent.ID).
+		// 如果堵塞的event在event保留期内未被处理成功，在curScanStartTime 之前的service_event不会被扫描到，也永远不会被处理，此时放弃它们，不要导致后续的event 处理堵塞。
+		Where("event_created_at >= ?", curScanStartTime).First(precedingServiceEvent).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			e.logger.V(logger.LevelInfo).Info("can not find preceding service_event, see it as first event", "current event_id", spo.EventID)
+			e.logger.V(logger.LevelInfo).Info("can not find preceding service_event or it's expired, see it as first event", "current event_id", spo.EventID)
 			return nil
 		}
 		e.logger.V(logger.LevelInfo).Info("find preceding service_event error", "current event_id", spo.EventID, "err", err)
@@ -494,7 +495,7 @@ func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO
 
 // handleEvent, 多实例并发场景下先锁住event，check service_event状态，如果是保序event，则check前序event状态，check通过后，执行event handler
 // 执行成功，则保存执行结果，执行失败则根据RetryStrategy更新retryCount/nextTime/failedMessage
-func (e *EventBus) handleEvent(ctx context.Context, po *EventPO) error {
+func (e *EventBus) handleEvent(ctx context.Context, po *EventPO, curScanStartTime time.Time) error {
 	// 下面的db 操作一定要全部使用 tx
 	fn := func(tx *gorm.DB) (err error) {
 		// 找到并锁住event
@@ -547,7 +548,7 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO) error {
 
 		// 如果是保序event，则校验前序event的执行结果
 		if po.Event.SendType == dddfirework.SendTypeFIFO || po.Event.SendType == dddfirework.SendTypeLaxFIFO {
-			if err = e.checkPrecedingEvent(tx, spo, po); err != nil {
+			if err = e.checkPrecedingEvent(tx, spo, po, curScanStartTime); err != nil {
 				spo.FailedMessage = fmt.Sprintf("%v", err)
 				return err
 			}
@@ -569,7 +570,8 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO) error {
 func (e *EventBus) handleEvents() error {
 	e.logger.V(logger.LevelDebug).Info("handle events")
 	ctx := context.Background()
-	scanEvents, err := e.getScanEvents()
+	curScanStartTime := time.Now().Add(-scanStartTime)
+	scanEvents, err := e.getScanEvents(curScanStartTime)
 	if err != nil {
 		return err
 	}
@@ -577,7 +579,7 @@ func (e *EventBus) handleEvents() error {
 		e.logger.V(logger.LevelDebug).Info("find empty service_event, ignore")
 		return nil
 	}
-	e.dispatchEvents(ctx, scanEvents)
+	e.dispatchEvents(ctx, scanEvents, curScanStartTime)
 	return nil
 }
 

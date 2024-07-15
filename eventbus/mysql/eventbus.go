@@ -350,21 +350,6 @@ func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventPO, error) {
 	}
 	if retryableServiceEvent.EventID > 0 {
 		eventOffset = retryableServiceEvent.EventID
-	} else {
-		// 如果没有init service_event， 那就说明要么service_event 为空，要么都已经被处理了（成功或失败）
-		finishedServiceEvent := &ServiceEventPO{}
-		if err := e.db.Where("service = ?", e.serviceName).
-			Where("event_id >= ?", scanStartEventID).
-			// gorm first/last 会带上primary key,所以 first/last 不要与order 混用, db.Limit(1).Find(&user) = db.Take(&user)
-			Order("event_id desc").Take(finishedServiceEvent).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, err
-			}
-		}
-		// 找不到init的service_event 说明上一批的event 都被处理了，找到最大的service_event 即为本次开始处理的event offset
-		if finishedServiceEvent.EventID > 0 {
-			eventOffset = finishedServiceEvent.EventID + 1
-		}
 	}
 	// 每次只扫描 event.id=[eventOffset,eventBound) 区间内的event，防止未消费event 过多时导致的慢sql，
 	eventBound := eventOffset + int64(e.opt.LimitPerRun)
@@ -554,7 +539,7 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO, scanStartEventI
 				spo.FailedMessage = spo.FailedMessage[:65535]
 			}
 			spo.RunAt = time.Now()
-			// 插入或更新 service_event
+			// 插入或更新 service_event。 此处必须覆盖掉err 的值，目的是保证service_event 一定插入到db
 			if err = tx.Save(spo).Error; err != nil {
 				e.logger.Error(err, "create or update service_event error", "current event_id", spo.EventID)
 				return

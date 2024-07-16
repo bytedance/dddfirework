@@ -256,7 +256,7 @@ func (e *EventBus) getTX(ctx context.Context) *Transaction {
 func (e *EventBus) Dispatch(ctx context.Context, events ...*dddfirework.DomainEvent) error {
 	tx := e.getTX(ctx)
 	pos := make([]*EventPO, len(events))
-	spos := make([]*ServiceEventPO, len(events))
+
 	for i, evt := range events {
 		po, err := eventPersist(evt)
 		if err != nil {
@@ -265,23 +265,25 @@ func (e *EventBus) Dispatch(ctx context.Context, events ...*dddfirework.DomainEv
 		if tx != nil {
 			po.TransID = tx.ID
 		}
-
 		pos[i] = po
-
-		spos[i] = &ServiceEventPO{
-			Service:        e.serviceName,
-			EventID:        po.ID,
-			Status:         ServiceEventStatusInit,
-			EventCreatedAt: po.EventCreatedAt,
-			// 初始化时给一个尽量早的可执行时间，表示创建后就可以执行了
-			NextTime: po.EventCreatedAt,
-		}
 	}
-	//return e.getDB(ctx).Create(pos).Error
+	// return e.getDB(ctx).Create(pos).Error
 	// 在创建event的时候顺带创建service_event，在消费时创建service_event 非常复杂，必须联表查询容易导致慢sql 问题，且容易漏建service_event。
 	return e.db.Transaction(func(tx *gorm.DB) error {
 		if err := e.getDB(ctx).Create(pos).Error; err != nil {
 			return err
+		}
+		// gorm 在创建po后为对象赋值主键自增id
+		spos := make([]*ServiceEventPO, len(events))
+		for i, po := range pos {
+			spos[i] = &ServiceEventPO{
+				Service:        e.serviceName,
+				EventID:        po.ID,
+				Status:         ServiceEventStatusInit,
+				EventCreatedAt: po.EventCreatedAt,
+				// 初始化时给一个尽量早的可执行时间，表示创建后就可以执行了
+				NextTime: po.EventCreatedAt,
+			}
 		}
 		if err := e.getDB(ctx).Create(spos).Error; err != nil {
 			return err

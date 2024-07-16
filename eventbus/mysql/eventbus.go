@@ -274,19 +274,25 @@ func (e *EventBus) Dispatch(ctx context.Context, events ...*dddfirework.DomainEv
 			return err
 		}
 		// gorm 在创建po后为对象赋值主键自增id
-		spos := make([]*ServiceEventPO, len(events))
-		for i, po := range pos {
-			spos[i] = &ServiceEventPO{
-				Service:        e.serviceName,
-				EventID:        po.ID,
-				Status:         ServiceEventStatusInit,
-				EventCreatedAt: po.EventCreatedAt,
-				// 初始化时给一个尽量早的可执行时间，表示创建后就可以执行了
-				NextTime: po.EventCreatedAt,
-			}
-		}
-		if err := e.getDB(ctx).Create(spos).Error; err != nil {
+		serviceNames, err := e.listService()
+		if err != nil {
 			return err
+		}
+		for _, serviceName := range serviceNames {
+			spos := make([]*ServiceEventPO, len(events))
+			for i, po := range pos {
+				spos[i] = &ServiceEventPO{
+					Service:        serviceName,
+					EventID:        po.ID,
+					Status:         ServiceEventStatusInit,
+					EventCreatedAt: po.EventCreatedAt,
+					// 初始化时给一个尽量早的可执行时间，表示创建后就可以执行了
+					NextTime: po.EventCreatedAt,
+				}
+			}
+			if err := e.getDB(ctx).Create(spos).Error; err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -357,6 +363,18 @@ func (e *EventBus) initService() error {
 	return e.db.Where(ServicePO{Name: e.serviceName}).FirstOrCreate(service).Error
 }
 
+func (e *EventBus) listService() ([]string, error) {
+	services := make([]*ServicePO, 0)
+	if err := e.db.Find(&services).Error; err != nil {
+		return nil, err
+	}
+	serviceNames := make([]string, 0)
+	for _, service := range services {
+		serviceNames = append(serviceNames, service.Name)
+	}
+	return serviceNames, nil
+}
+
 type EventTuple struct {
 	ServiceEvent *ServiceEventPO
 	Event        *EventPO
@@ -388,7 +406,7 @@ func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventTuple, error) 
 		Where("event_id >= ?", eventOffset).
 		//Where("event_id < ?", eventBound).
 		Where("next_time <= ?", time.Now()).
-		Order("event_id").Limit(e.opt.LimitPerRun).Find(serviceEventPOs).Error; err != nil {
+		Order("event_id").Limit(e.opt.LimitPerRun).Find(&serviceEventPOs).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -399,7 +417,7 @@ func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventTuple, error) 
 		eventIds = append(eventIds, serviceEvent.EventID)
 	}
 	eventPOs := make([]*EventPO, 0)
-	if err := e.db.Where("id in ?", eventOffset).Order("id").Find(&eventPOs).Error; err != nil {
+	if err := e.db.Where("id in ?", eventIds).Order("id").Find(&eventPOs).Error; err != nil {
 		return nil, err
 	}
 	// eventPO与serviceEventPO 都按event id排序才能进行下一步

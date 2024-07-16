@@ -394,6 +394,11 @@ func (e *EventBus) getScanEvents(scanStartEventID int64) ([]*EventTuple, error) 
 		}
 		return nil, nil
 	}
+	if earliestRunnableServiceEvent.ID > 0 {
+		if eventOffset < earliestRunnableServiceEvent.ID {
+			eventOffset = earliestRunnableServiceEvent.EventID
+		}
+	}
 	//// 每次只扫描 event.id=[eventOffset,eventBound) 区间内的event，防止未消费event 过多时导致的慢sql，
 	//eventBound := eventOffset + int64(e.opt.LimitPerRun)
 	////eventBound是在eventOffset 超过重试次数之前，最大可以处理到的event

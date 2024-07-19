@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -137,11 +138,21 @@ func TestEventBusConcurrent(t *testing.T) {
 		offset := int64(0)
 		opt.DefaultOffset = &offset
 	})
+	for i := 1; i < 10; i++ {
+		eventBus.Dispatch(context.Background(), &dddfirework.DomainEvent{
+			ID:        fmt.Sprintf("TestEventBusConcurrent-%d", i),
+			Type:      "TestEventBusConcurrent",
+			Payload:   []byte("{}"),
+			CreatedAt: time.Now(),
+		})
+	}
 	eventBus.RegisterEventHandler(func(ctx context.Context, evt *dddfirework.DomainEvent) error {
 		mu.Lock()
 		defer mu.Unlock()
-		ids[evt.ID] = true
-		events = append(events, evt)
+		if strings.HasPrefix(evt.ID, "TestEventBusConcurrent") {
+			ids[evt.ID] = true
+			events = append(events, evt)
+		}
 		return nil
 	})
 
@@ -158,7 +169,7 @@ func TestEventBusConcurrent(t *testing.T) {
 	wg.Wait()
 
 	var eventCount int64
-	db.Model(&ServiceEventPO{}).Count(&eventCount)
+	db.Model(&ServiceEventPO{}).Where("event_id LIKE ?", "TestEventBusConcurrent%").Count(&eventCount)
 	// 保证所有事件都能消费到
 	assert.Equal(t, eventCount, int64(len(ids)))
 	curr := time.Time{}

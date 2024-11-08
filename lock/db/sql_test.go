@@ -76,10 +76,10 @@ func TestRun(t *testing.T) {
 	go func() {
 		err = lock.Run(context.Background(), "abc", func(ctx context.Context) {
 			defer wg.Done()
-			time.Sleep(10 * time.Second)
+			time.Sleep(2 * time.Second)
 		})
 	}()
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 	// 会加锁失败
 	_, err = lock.Lock(context.Background(), "abc")
 	fmt.Println(err)

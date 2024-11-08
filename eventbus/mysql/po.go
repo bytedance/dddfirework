@@ -155,6 +155,7 @@ CREATE TABLE `ddd_domain_service_event` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_service_event_id` (`service`,`event_id`),
   KEY `idx_service_status_next_time` (`service`,`status`,`next_time`),
+  KEY `idx_service_status_event_id` (`service`,`status`,`event_id`),
   KEY `idx_ddd_domain_service_event_event_created_at` (`event_created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 */
@@ -162,14 +163,14 @@ CREATE TABLE `ddd_domain_service_event` (
 // ServiceEventPO 记录service对event的处理情况
 type ServiceEventPO struct {
 	ID             int64              `gorm:"primaryKey;autoIncrement"`
-	Service        string             `gorm:"type:varchar(30);column:service;uniqueIndex:idx_service_event_id;index:idx_service_status_next_time;"`
-	EventID        int64              `gorm:"column:event_id;uniqueIndex:idx_service_event_id;not null"`
-	RetryCount     int                `gorm:"type:int(11);column:retry_count"`                                                    // 重试次数
-	Status         ServiceEventStatus `gorm:"type:tinyint;column:status;index:idx_service_status_next_time;"`                     // service event状态
-	FailedMessage  string             `gorm:"type:text;column:failed_message"`                                                    // 失败详情
-	EventCreatedAt time.Time          `gorm:"type:datetime(3);index;not null"`                                                    // 事件的创建时间
-	NextTime       time.Time          `gorm:"type:datetime(3);index:idx_service_status_next_time;not null"`                       // 事件可以运行的事件
-	RunAt          time.Time          `gorm:"type:datetime(3);zeroValue:1970-01-01 00:00:01;default:'1970-01-01 00:00:01+00:00'"` // 事件真实运行时间，单纯记录下
+	Service        string             `gorm:"type:varchar(30);column:service;uniqueIndex:idx_service_event_id;index:idx_service_status_event_id;index:idx_service_status_next_time;"`
+	EventID        int64              `gorm:"column:event_id;uniqueIndex:idx_service_event_id;index:idx_service_status_event_id;not null"`
+	RetryCount     int                `gorm:"type:int(11);column:retry_count"`                                                                  // 重试次数
+	Status         ServiceEventStatus `gorm:"type:tinyint;column:status;index:idx_service_status_event_id;index:idx_service_status_next_time;"` // service event状态
+	FailedMessage  string             `gorm:"type:text;column:failed_message"`                                                                  // 失败详情
+	EventCreatedAt time.Time          `gorm:"type:datetime(3);index;not null"`                                                                  // 事件的创建时间
+	NextTime       time.Time          `gorm:"type:datetime(3);index:idx_service_status_next_time;not null"`                                     // 事件可以运行的事件
+	RunAt          time.Time          `gorm:"type:datetime(3);zeroValue:1970-01-01 00:00:01;default:'1970-01-01 00:00:01+00:00'"`               // 事件真实运行时间，单纯记录下
 }
 
 func (o *ServiceEventPO) TableName() string {

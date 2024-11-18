@@ -126,3 +126,5 @@ dddfirework 是一个支持 DDD （领域驱动设计）实现的引擎框架，
 # 更多示例
 
 参考: [example/main.go](example/main.go)
+
+![wechat](wechat.jpeg)

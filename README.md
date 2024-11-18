@@ -126,3 +126,5 @@ DDD Firework is a framework that supports the implementation of DDD (Domain-Driv
 # More Example
 
 ref: [example/main.go](example/main.go)
+
+![wechat](wechat.jpeg)

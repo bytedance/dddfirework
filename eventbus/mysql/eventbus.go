@@ -331,7 +331,7 @@ func (e *EventBus) getScanEvents() ([]*EventPO, error) {
 	eventOffset := int64(0)
 	retryableServiceEvent := &ServiceEventPO{}
 	if err := e.db.Where("service = ?", e.serviceName).
-		Where("status = ?", ServiceEventStatusInit).
+		Where("status = CAST(? AS INT)", ServiceEventStatusInit).
 		Order("event_id").First(retryableServiceEvent).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
@@ -357,12 +357,12 @@ func (e *EventBus) getScanEvents() ([]*EventPO, error) {
 		// 只抓取当前service的 service_event参与 left join
 		Joins("left join ddd_domain_service_event ON ddd_domain_event.id = ddd_domain_service_event.event_id and ddd_domain_service_event.service = ?", e.serviceName).
 		Where("ddd_domain_event.event_created_at >= ?", time.Now().Add(-scanStartTime)).
-		Where("ddd_domain_event.id >= ?", eventOffset).
+		Where("ddd_domain_event.id >= CAST(? AS INT)", eventOffset).
 		Where(
 			// event_id 为null 表示event 还未被当前service service_event引用
 			e.db.Where("ddd_domain_service_event.event_id is null").
 				// 被当前service service_event 引用但未处理成功且到了新的重试时间的event
-				Or("ddd_domain_service_event.status = ? and ddd_domain_service_event.next_time <= ?", ServiceEventStatusInit, time.Now())).
+				Or("ddd_domain_service_event.status = CAST(? AS INT) and ddd_domain_service_event.next_time <= ?", ServiceEventStatusInit, time.Now())).
 		Order("ddd_domain_event.event_created_at, ddd_domain_event.id").
 		Limit(e.opt.LimitPerRun).Find(&eventPOs).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

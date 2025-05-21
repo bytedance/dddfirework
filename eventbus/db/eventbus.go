@@ -13,12 +13,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysql
+package db
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/bytedance/dddfirework/common"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/bytedance/dddfirework/logger/stdr"
 )
 
+const dbType = "mysql"
 const retryInterval = time.Second * 3
 const retryLimit = 5
 const runInterval = time.Millisecond * 100
@@ -136,6 +138,8 @@ type Options struct {
 	RetryStrategy     IRetryStrategy
 	TXCheckTimeout    time.Duration
 	Logger            logr.Logger
+
+	DBType common.DBType
 }
 
 type Option func(opt *Options)
@@ -144,6 +148,7 @@ type contextKey string
 type EventBus struct {
 	serviceName   string
 	db            *gorm.DB
+	dbType        common.DBType
 	logger        logr.Logger
 	opt           Options
 	retryStrategy IRetryStrategy
@@ -174,6 +179,7 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 		LimitPerRun:       limitPerRun,
 		TXCheckTimeout:    txCheckTimeout,
 		Logger:            defaultLogger,
+		DBType:            common.DBTypeMySQL,
 	}
 	for _, o := range options {
 		o(&opt)
@@ -203,6 +209,7 @@ func NewEventBus(serviceName string, db *gorm.DB, options ...Option) *EventBus {
 		opt:           opt,
 		txKey:         contextKey(fmt.Sprintf("eventbus_tx_%d", time.Now().Unix())),
 		cleanCron:     cron.New(),
+		dbType:        opt.DBType,
 	}
 	_ = eb.initService()
 	return eb
@@ -330,11 +337,21 @@ func (e *EventBus) getScanEvents() ([]*EventPO, error) {
 	// 从service_event 视角查询最早的 需要的处理的event。其实仅凭下面的联表查询即可一步做到 返回待处理的event，但联表查询可能是性能瓶颈，因此通过计算 eventOffset来减少联表查询的数据量
 	eventOffset := int64(0)
 	retryableServiceEvent := &ServiceEventPO{}
-	if err := e.db.Where("service = ?", e.serviceName).
-		Where("status = CAST(? AS INT)", ServiceEventStatusInit).
-		Order("event_id").First(retryableServiceEvent).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
+	if e.dbType == common.DBTypeKingbase {
+		if err := e.db.Where("service = ?", e.serviceName).
+			Where("status = CAST(? AS INT)", ServiceEventStatusInit).
+			Order("event_id").First(retryableServiceEvent).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, err
+			}
+		}
+	} else {
+		if err := e.db.Where("service = ?", e.serviceName).
+			Where("status = ?", ServiceEventStatusInit).
+			Order("event_id").First(retryableServiceEvent).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, err
+			}
 		}
 	}
 	if retryableServiceEvent.EventID > 0 {
@@ -353,23 +370,45 @@ func (e *EventBus) getScanEvents() ([]*EventPO, error) {
 		}
 	}
 	eventPOs := make([]*EventPO, 0)
-	if err := e.db.
-		// 只抓取当前service的 service_event参与 left join
-		Joins("left join ddd_domain_service_event ON ddd_domain_event.id = ddd_domain_service_event.event_id and ddd_domain_service_event.service = ?", e.serviceName).
-		Where("ddd_domain_event.event_created_at >= ?", time.Now().Add(-scanStartTime)).
-		Where("ddd_domain_event.id >= CAST(? AS INT)", eventOffset).
-		Where(
-			// event_id 为null 表示event 还未被当前service service_event引用
-			e.db.Where("ddd_domain_service_event.event_id is null").
-				// 被当前service service_event 引用但未处理成功且到了新的重试时间的event
-				Or("ddd_domain_service_event.status = CAST(? AS INT) and ddd_domain_service_event.next_time <= ?", ServiceEventStatusInit, time.Now())).
-		Order("ddd_domain_event.event_created_at, ddd_domain_event.id").
-		Limit(e.opt.LimitPerRun).Find(&eventPOs).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 没找到就是没有event 要处理
-			return nil, nil
+
+	if e.dbType == common.DBTypeKingbase {
+		if err := e.db.
+			// 只抓取当前service的 service_event参与 left join
+			Joins("left join ddd_domain_service_event ON ddd_domain_event.id = ddd_domain_service_event.event_id and ddd_domain_service_event.service = ?", e.serviceName).
+			Where("ddd_domain_event.event_created_at >= ?", time.Now().Add(-scanStartTime)).
+			Where("ddd_domain_event.id >= CAST(? AS INT)", eventOffset).
+			Where(
+				// event_id 为null 表示event 还未被当前service service_event引用
+				e.db.Where("ddd_domain_service_event.event_id is null").
+					// 被当前service service_event 引用但未处理成功且到了新的重试时间的event
+					Or("ddd_domain_service_event.status = CAST(? AS INT) and ddd_domain_service_event.next_time <= ?", ServiceEventStatusInit, time.Now())).
+			Order("ddd_domain_event.event_created_at, ddd_domain_event.id").
+			Limit(e.opt.LimitPerRun).Find(&eventPOs).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// 没找到就是没有event 要处理
+				return nil, nil
+			}
+			return nil, err
 		}
-		return nil, err
+	} else {
+		if err := e.db.
+			// 只抓取当前service的 service_event参与 left join
+			Joins("left join ddd_domain_service_event ON ddd_domain_event.id = ddd_domain_service_event.event_id and ddd_domain_service_event.service = ?", e.serviceName).
+			Where("ddd_domain_event.event_created_at >= ?", time.Now().Add(-scanStartTime)).
+			Where("ddd_domain_event.id >= ?", eventOffset).
+			Where(
+				// event_id 为null 表示event 还未被当前service service_event引用
+				e.db.Where("ddd_domain_service_event.event_id is null").
+					// 被当前service service_event 引用但未处理成功且到了新的重试时间的event
+					Or("ddd_domain_service_event.status = ? and ddd_domain_service_event.next_time <= ?", ServiceEventStatusInit, time.Now())).
+			Order("ddd_domain_event.event_created_at, ddd_domain_event.id").
+			Limit(e.opt.LimitPerRun).Find(&eventPOs).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// 没找到就是没有event 要处理
+				return nil, nil
+			}
+			return nil, err
+		}
 	}
 	return eventPOs, nil
 }
@@ -449,12 +488,24 @@ func (e *EventBus) checkPrecedingEvent(tx *gorm.DB, spo *ServiceEventPO, eventPO
 	}
 	// 找到前序service_event
 	precedingServiceEvent := &ServiceEventPO{}
-	if err := tx.Where("service = ?", e.serviceName).
-		// event_created_at 是最权威的前序，但是时间精度问题导致可能前序event可能跟当前event一样，再用event_id 明确下
-		Where("event_id = ?", precedingEvent.ID).First(precedingServiceEvent).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			e.logger.V(logger.LevelInfo).Info("find preceding service_event error", "current event_id", spo.EventID, "err", err)
-			return err
+
+	if e.dbType == common.DBTypeKingbase {
+		if err := tx.Where("service = ?", e.serviceName).
+			// event_created_at 是最权威的前序，但是时间精度问题导致可能前序event可能跟当前event一样，再用event_id 明确下
+			Where("event_id = CAST(? AS INT)", precedingEvent.ID).First(precedingServiceEvent).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				e.logger.V(logger.LevelInfo).Info("find preceding service_event error", "current event_id", spo.EventID, "err", err)
+				return err
+			}
+		}
+	} else {
+		if err := tx.Where("service = ?", e.serviceName).
+			// event_created_at 是最权威的前序，但是时间精度问题导致可能前序event可能跟当前event一样，再用event_id 明确下
+			Where("event_id = ?", precedingEvent.ID).First(precedingServiceEvent).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				e.logger.V(logger.LevelInfo).Info("find preceding service_event error", "current event_id", spo.EventID, "err", err)
+				return err
+			}
 		}
 	}
 	// 找不到precedingServiceEvent，则说明前序event 还未被处理
@@ -501,11 +552,22 @@ func (e *EventBus) handleEvent(ctx context.Context, po *EventPO) error {
 			// 初始化时给一个尽量早的可执行时间，表示创建后就可以执行了
 			NextTime: po.EventCreatedAt,
 		}
-		if err := tx.Where("service = ?", e.serviceName).Where("event_id = ?", po.ID).
-			First(spo).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				e.logger.Info("find current service_event error", "current event_id", spo.EventID, "err", err)
-				return err
+
+		if e.dbType == common.DBTypeKingbase {
+			if err := tx.Where("service = ?", e.serviceName).Where("event_id = CAST(? AS INT)", po.ID).
+				First(spo).Error; err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					e.logger.Info("find current service_event error", "current event_id", spo.EventID, "err", err)
+					return err
+				}
+			}
+		} else {
+			if err := tx.Where("service = ?", e.serviceName).Where("event_id = ?", po.ID).
+				First(spo).Error; err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					e.logger.Info("find current service_event error", "current event_id", spo.EventID, "err", err)
+					return err
+				}
 			}
 		}
 		// 如果service_event 已存在，确认service_event 还未被执行
@@ -609,7 +671,11 @@ func (e *EventBus) cleanEvents() error {
 	query := e.db.Model(&ServiceEventPO{}).Clauses(clause.Locking{Strength: "UPDATE"})
 	needCleanAt := time.Now().Add(-e.opt.RetentionTime)
 	// 清理成功service_event
-	query = query.Where("service = ?", e.serviceName).Where("status = ?", ServiceEventStatusSuccess).Where("event_created_at < ?", needCleanAt)
+	if e.dbType == common.DBTypeKingbase {
+		query = query.Where("service = ?", e.serviceName).Where("status = CAST(? AS INT)", ServiceEventStatusSuccess).Where("event_created_at < ?", needCleanAt)
+	} else {
+		query = query.Where("service = ?", e.serviceName).Where("status = ?", ServiceEventStatusSuccess).Where("event_created_at < ?", needCleanAt)
+	}
 	rows, err := query.Rows()
 	if err != nil {
 		return err

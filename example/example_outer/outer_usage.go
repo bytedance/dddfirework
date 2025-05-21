@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/bytedance/dddfirework"
-	event_bus "github.com/bytedance/dddfirework/eventbus/mysql"
+	event_bus "github.com/bytedance/dddfirework/eventbus/db"
 	"github.com/bytedance/dddfirework/example/common/domain_event/sale"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"

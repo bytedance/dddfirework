@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysql
+package db
 
 import (
 	"context"
@@ -64,7 +64,7 @@ type IConverter interface {
 	Model2Entity(po IModel, do ddd.IEntity) error
 }
 
-// RegisterConverter 使用时直接 mysql.RegisterConverter(&do{}, converter)
+// RegisterConverter 使用时直接 db.RegisterConverter(&do{}, converter)
 func RegisterConverter(entity ddd.IEntity, converter IConverter) {
 	entity2ModelRegistry[realType(entity)] = Converter{
 		entity2Model: converter.Entity2Model,

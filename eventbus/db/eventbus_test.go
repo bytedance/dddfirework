@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysql
+package db
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/bytedance/dddfirework"
-	exec_mysql "github.com/bytedance/dddfirework/executor/mysql"
+	exec_mysql "github.com/bytedance/dddfirework/executor/db"
 	"github.com/bytedance/dddfirework/testsuit"
 )
 
